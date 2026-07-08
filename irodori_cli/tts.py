@@ -25,15 +25,24 @@ class InferRunner:
     def __init__(self, config: Config):
         self.config = config
 
+    def repo_cwd(self) -> str | None:
+        """infer.py を実行する作業ディレクトリ（Irodori-TTS リポジトリ）。
+
+        `uv run` はカレントディレクトリのプロジェクト環境を使うため、必ず repo_dir を
+        カレントにして実行する。ここが tyrano 側だと依存（huggingface_hub 等）が無く失敗する。
+        """
+        return os.path.abspath(self.config.irodori.repo_dir) if self.config.irodori.repo_dir else None
+
     def build_command(self, text: str, lora_dir: str, out_wav: str) -> list[str]:
         ir = self.config.irodori
-        infer_py = os.path.join(ir.repo_dir, "infer.py") if ir.repo_dir else "infer.py"
+        # cwd を repo_dir にするため、infer.py と出力先は絶対パスに固定する。
+        infer_py = os.path.abspath(os.path.join(ir.repo_dir, "infer.py")) if ir.repo_dir else "infer.py"
         cmd = shlex.split(ir.runner) + [
             infer_py,
             "--hf-checkpoint", ir.checkpoint,
             "--text", text,
-            "--lora-adapter", lora_dir,
-            "--output-wav", out_wav,
+            "--lora-adapter", os.path.abspath(lora_dir) if lora_dir else lora_dir,
+            "--output-wav", os.path.abspath(out_wav),
         ]
         if ir.num_steps is not None:
             cmd += ["--num-steps", str(ir.num_steps)]
@@ -43,14 +52,32 @@ class InferRunner:
         return cmd
 
     def infer(self, text: str, lora_dir: str, out_wav: str) -> None:
-        os.makedirs(os.path.dirname(os.path.abspath(out_wav)), exist_ok=True)
+        out_wav = os.path.abspath(out_wav)
+        os.makedirs(os.path.dirname(out_wav), exist_ok=True)
         cmd = self.build_command(text, lora_dir, out_wav)
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=self.repo_cwd(),  # ★ Irodori-TTS リポジトリをカレントにして実行
+        )
         if proc.returncode != 0:
+            stderr = (proc.stderr or "").strip()
+            hint = ""
+            if "ModuleNotFoundError" in stderr or "No module named" in stderr:
+                hint = (
+                    "\nヒント: Irodori-TTS 側の依存が入っていない可能性があります。"
+                    f"\n  1) '{self.repo_cwd()}' で通常どおり infer.py が動くか確認してください。"
+                    "\n  2) その環境の起動コマンドを config.yaml の irodori.runner に設定してください"
+                    "（例: 'uv run python' / '<Irodori-TTSのvenv>/Scripts/python.exe'）。"
+                )
             raise RuntimeError(
                 f"infer.py failed (code {proc.returncode}).\n"
                 f"cmd: {' '.join(shlex.quote(c) for c in cmd)}\n"
-                f"stderr: {proc.stderr.strip()}"
+                f"cwd: {self.repo_cwd()}\n"
+                f"stderr: {stderr}{hint}"
             )
         if not os.path.exists(out_wav):
             raise RuntimeError(f"infer.py が出力を生成しませんでした: {out_wav}")

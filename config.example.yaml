@@ -12,8 +12,12 @@ csv:
   encoding: "utf-8-sig"  # UTF-8(BOM有無どちらも可)。日本語Excel保存なら cp932 も指定可
 
 irodori:
-  repo_dir:   "/path/to/Irodori-TTS"        # infer.py のあるディレクトリ
-  runner:     "uv run --no-sync python"     # 実行コマンド前置
+  repo_dir:   "/path/to/Irodori-TTS"        # infer.py のあるディレクトリ（ここをカレントにして実行）
+  # infer.py を「Irodori-TTS の依存が入った環境」で動かすコマンド。
+  #   例) uv 管理なら "uv run python"（初回は repo_dir で `uv sync` 済みにしておく）
+  #   例) 専用 venv があるなら "E:/ai_voice/Irodori-TTS/Irodori-TTS/.venv/Scripts/python.exe"
+  # ※ repo_dir をカレントにして実行するので、tyrano 側の .venv は使われません。
+  runner:     "uv run python"
   checkpoint: "Aratako/Irodori-TTS-500M-v3"
   num_steps:  32
   seconds:    null

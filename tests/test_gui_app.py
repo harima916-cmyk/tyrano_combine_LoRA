@@ -58,6 +58,16 @@ class TestEmojiInsertApp(unittest.TestCase):
         w._insert_emoji("😊")
         self.assertEqual(w.line_model.rows[0].send_text, "おはよう😊")
 
+    def test_fallback_into_cell_with_existing_emoji(self):
+        """既に絵文字がある行でも、コードポイント index で正しい位置に挿入（Finding 1）。"""
+        w = self._win()
+        # 送信テキストを「😊test」にし、😊 の直後（コードポイント index 1）に挿入
+        w.line_model.setData(w.line_model.index(0, L.COL_SEND), "😊test", role=2)
+        w._active_send_editor = None
+        w._remember_send_cursor(0, 1)  # デリゲートが変換した後の index
+        w._insert_emoji("🎉")
+        self.assertEqual(w.line_model.rows[0].send_text, "😊🎉test")
+
 
 if __name__ == "__main__":
     unittest.main()

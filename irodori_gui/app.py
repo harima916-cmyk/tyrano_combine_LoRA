@@ -31,6 +31,7 @@ from irodori_csv import ParseError, Scenario, read_scenario, validate_scenario, 
 from .delegates import CharacterComboDelegate, LoraFolderDelegate, SendTextDelegate
 from .emoji import load_emoji_palette
 from .models import CharacterTableModel, LineTableModel
+from .textutil import qt_cursor_to_index
 
 ENCODINGS = ["utf-8-sig", "utf-8", "cp932"]
 
@@ -48,8 +49,9 @@ class MainWindow(QMainWindow):
         self._player = None
         self._audio_out = None
         self._active_send_editor = None       # 編集中の送信テキスト QLineEdit（ライブ挿入用）
+        self._send_edit_row: int | None = None     # 編集中の行（エディタの行）
         self._send_cursor_row: int | None = None   # 最後にカーソルがあった行
-        self._send_cursor_pos: int | None = None   # 最後にカーソルがあった位置（保険）
+        self._send_cursor_pos: int | None = None   # 最後にカーソルがあった位置（コードポイント index）
 
         self.char_model = CharacterTableModel()
         self.line_model = LineTableModel(self.char_model)
@@ -229,10 +231,13 @@ class MainWindow(QMainWindow):
         if idx.isValid():
             self.char_model.remove_row(idx.row())
 
-    def _set_send_editor(self, editor):
+    def _set_send_editor(self, editor, row=None):
         self._active_send_editor = editor
+        if row is not None:
+            self._send_edit_row = row
 
     def _remember_send_cursor(self, row: int, pos: int):
+        # pos はコードポイント index（デリゲート側で UTF-16 から変換済み）
         self._send_cursor_row = row
         self._send_cursor_pos = pos
 
@@ -240,11 +245,15 @@ class MainWindow(QMainWindow):
         # (1) 送信テキストを編集中なら、その生きたカーソル位置へ挿入（エディタは閉じない）
         ed = self._active_send_editor
         if ed is not None:
-            ed.deselect()      # 全選択状態でも上書きしない
-            ed.insert(emoji)   # カーソル位置へ挿入（連続挿入も追従）
-            # ライブ挿入後の位置を保険として記録
-            self._remember_send_cursor(self._line_row(), ed.cursorPosition())
-            return
+            try:
+                ed.deselect()      # 全選択状態でも上書きしない
+                ed.insert(emoji)   # カーソル位置へ挿入（Qt 内部＝UTF-16 で正しく挿入）
+                # ライブ挿入後の位置を保険として記録（コードポイント index に変換）
+                row = self._send_edit_row if self._send_edit_row is not None else self._line_row()
+                self._remember_send_cursor(row, qt_cursor_to_index(ed.text(), ed.cursorPosition()))
+                return
+            except RuntimeError:
+                self._active_send_editor = None  # 破棄済み C++ オブジェクト → フォールバックへ
         # (2) 未編集/エディタが閉じた場合: 記録済みカーソル位置へモデル層で挿入（保険）
         row = self._line_row()
         if row < 0:
@@ -255,7 +264,7 @@ class MainWindow(QMainWindow):
             return
         pos = self._send_cursor_pos if self._send_cursor_row == row else None
         self.line_model.insert_emoji(row, emoji, pos)
-        # 連続挿入できるよう位置を追従
+        # 連続挿入できるよう位置を追従（すべてコードポイント index）
         self._send_cursor_row = row
         self._send_cursor_pos = (
             len(self.line_model.rows[row].send_text) if pos is None else pos + len(emoji)
@@ -294,9 +303,17 @@ class MainWindow(QMainWindow):
         )
         return r == QMessageBox.Yes
 
+    def _clear_send_editor_state(self):
+        """モデルリセット前に、破棄されうる編集中エディタ参照を無効化する。"""
+        self._active_send_editor = None
+        self._send_edit_row = None
+        self._send_cursor_row = None
+        self._send_cursor_pos = None
+
     def _new_file(self):
         if not self._confirm_discard():
             return
+        self._clear_send_editor_state()
         self.char_model.beginResetModel(); self.char_model.rows = []; self.char_model.endResetModel()
         self.line_model.beginResetModel(); self.line_model.rows = []; self.line_model.linked = []; self.line_model.endResetModel()
         self.char_model.add_row()
@@ -321,6 +338,7 @@ class MainWindow(QMainWindow):
         self._load_scenario(sc, path)
 
     def _load_scenario(self, sc: Scenario, path: str | None):
+        self._clear_send_editor_state()
         self.char_model.beginResetModel(); self.char_model.rows = sc.characters; self.char_model.endResetModel()
         self.line_model.beginResetModel()
         self.line_model.rows = sc.lines

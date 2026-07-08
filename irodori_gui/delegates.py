@@ -7,6 +7,7 @@ from typing import Callable
 from PySide6.QtWidgets import QComboBox, QFileDialog, QStyledItemDelegate
 
 from .models import CharacterTableModel
+from .textutil import qt_cursor_to_index
 
 
 class SendTextDelegate(QStyledItemDelegate):
@@ -24,11 +25,14 @@ class SendTextDelegate(QStyledItemDelegate):
 
     def createEditor(self, parent, option, index):
         editor = super().createEditor(parent, option, index)  # 既定は QLineEdit
-        self._on_editor(editor)
+        self._on_editor(editor, index.row())
         row = index.row()
         try:
+            # cursorPositionChanged の位置は UTF-16 単位 → コードポイント index に変換して通知
             editor.cursorPositionChanged.connect(
-                lambda _old, new, r=row: self._on_cursor(r, new)
+                lambda _old, new, ed=editor, r=row: self._on_cursor(
+                    r, qt_cursor_to_index(ed.text(), new)
+                )
             )
         except AttributeError:
             pass
@@ -37,12 +41,12 @@ class SendTextDelegate(QStyledItemDelegate):
     def setModelData(self, editor, model, index):
         super().setModelData(editor, model, index)
         try:
-            self._on_cursor(index.row(), editor.cursorPosition())
-        except AttributeError:
+            self._on_cursor(index.row(), qt_cursor_to_index(editor.text(), editor.cursorPosition()))
+        except (AttributeError, RuntimeError):
             pass
 
     def destroyEditor(self, editor, index):
-        self._on_editor(None)
+        self._on_editor(None, None)
         super().destroyEditor(editor, index)
 
 

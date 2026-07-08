@@ -4,30 +4,39 @@ from __future__ import annotations
 
 from typing import Callable
 
-from PySide6.QtWidgets import QComboBox, QFileDialog, QStyledItemDelegate
+from PySide6.QtWidgets import QComboBox, QFileDialog, QLineEdit, QStyledItemDelegate
 
 from .models import CharacterTableModel
 
 
-class SendTextDelegate(QStyledItemDelegate):
-    """送信テキスト列: 開いている QLineEdit エディタを通知する。
+class CursorTrackingLineEditDelegate(QStyledItemDelegate):
+    """送信テキスト列: 単一行編集し、カーソル位置を親へ通知する。
 
-    絵文字パレットがカーソル位置へ挿入できるよう、編集中のエディタ参照を
-    ウィンドウへ渡す（編集終了時は None を通知）。
+    絵文字パレットが「最後にカーソルがあった位置」へ挿入できるよう、
+    編集開始・カーソル移動・確定時に (row, pos) を通知する。
     """
 
-    def __init__(self, on_editor: Callable, parent=None):
+    def __init__(self, cursor_changed: Callable[[int, int], None], parent=None):
         super().__init__(parent)
-        self._on_editor = on_editor
+        self.cursor_changed = cursor_changed
 
     def createEditor(self, parent, option, index):
-        editor = super().createEditor(parent, option, index)  # 既定は QLineEdit
-        self._on_editor(editor)
+        editor = QLineEdit(parent)
+        row = index.row()
+        editor.cursorPositionChanged.connect(
+            lambda _old, new, r=row: self.cursor_changed(r, new)
+        )
         return editor
 
-    def destroyEditor(self, editor, index):
-        self._on_editor(None)
-        super().destroyEditor(editor, index)
+    def setEditorData(self, editor: QLineEdit, index):
+        text = index.model().data(index, role=0x0002) or ""  # Qt.EditRole
+        editor.setText(text)
+        editor.setCursorPosition(len(text))
+        self.cursor_changed(index.row(), editor.cursorPosition())
+
+    def setModelData(self, editor: QLineEdit, model, index):
+        model.setData(index, editor.text(), role=0x0002)
+        self.cursor_changed(index.row(), editor.cursorPosition())
 
 
 class CharacterComboDelegate(QStyledItemDelegate):

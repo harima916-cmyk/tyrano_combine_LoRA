@@ -250,10 +250,17 @@ class LineTableModel(QAbstractTableModel):
             self._emit_row(row)
             self.changed.emit()
 
-    def insert_emoji(self, row: int, emoji: str):
-        """選択行の送信テキスト末尾に絵文字を追加（切り離し扱い）。"""
+    def insert_emoji(self, row: int, emoji: str, pos: int | None = None):
+        """選択行の送信テキストの指定位置へ絵文字を挿入（切り離し扱い）。
+
+        pos=None なら末尾。範囲外の pos はクランプする。
+        """
         if 0 <= row < len(self.rows):
-            self.rows[row].send_text += emoji
+            text = self.rows[row].send_text
+            if pos is None:
+                pos = len(text)
+            pos = max(0, min(pos, len(text)))
+            self.rows[row].send_text = text[:pos] + emoji + text[pos:]
             self.linked[row] = False
             self._emit_row(row)
             self.changed.emit()

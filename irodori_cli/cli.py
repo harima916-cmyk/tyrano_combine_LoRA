@@ -179,7 +179,19 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except KeyboardInterrupt:
+        print("中断しました。", file=sys.stderr)
+        return 130
+    except Exception as e:  # noqa: BLE001 - ユーザーへスタックトレースを見せない
+        # 継続不能な入力・環境エラーは日本語メッセージ＋終了コードで返す。
+        if getattr(args, "verbose", False):
+            import traceback
+
+            traceback.print_exc()
+        print(f"エラー: {e}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

@@ -119,6 +119,50 @@ class TestBuild(unittest.TestCase):
         res = b.build(sc)
         self.assertEqual(res.generated, 3)  # 空行は生成されない
 
+    def test_group_by_char_same_head_allowed(self):
+        # 別キャラが同じヘッドでも group-by-char なら別サブフォルダで両方生成
+        sc = Scenario(
+            characters=[
+                Character("あかね", "1", "/l", "line_"),
+                Character("ゆい", "2", "/l", "line_"),
+            ],
+            lines=[Line("1", "a", "a"), Line("2", "b", "b")],
+        )
+        runner = FakeRunner()
+        b = Builder(self.cfg, runner)
+        out = os.path.join(self.tmp, "ex")
+        res = b.build(sc, out_dir=out, group_by_char=True)
+        self.assertEqual(res.generated, 2)
+        self.assertTrue(os.path.exists(os.path.join(out, "あかね", "line_1.wav")))
+        self.assertTrue(os.path.exists(os.path.join(out, "ゆい", "line_1.wav")))
+
+    def test_group_by_char_rebuild_skips(self):
+        sc = _scenario()
+        runner = FakeRunner()
+        b = Builder(self.cfg, runner)
+        out = os.path.join(self.tmp, "ex2")
+        b.build(sc, out_dir=out, group_by_char=True)
+        runner2 = FakeRunner()
+        b2 = Builder(self.cfg, runner2)
+        res = b2.build(_scenario(), out_dir=out, group_by_char=True)
+        self.assertEqual(res.skipped, 3)
+        self.assertEqual(runner2.calls, 0)
+
+    def test_empty_text_error_records_failure_no_raise(self):
+        cfg = Config(
+            voice_out_dir=os.path.join(self.tmp, "v"),
+            cache_dir=os.path.join(self.tmp, "c"),
+            state_file=os.path.join(self.tmp, "s.json"),
+            on_empty_text="error",
+        )
+        sc = _scenario()
+        sc.lines.append(Line("1", "", ""))
+        b = Builder(cfg, FakeRunner())
+        res = b.build(sc)  # 例外を投げないこと
+        self.assertEqual(res.generated, 3)
+        self.assertEqual(res.failed, 1)
+        self.assertTrue(any("空" in msg for _n, msg in res.failures))
+
     def test_preview(self):
         runner = FakeRunner()
         b = Builder(self.cfg, runner)

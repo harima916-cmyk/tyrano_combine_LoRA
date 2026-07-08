@@ -6,12 +6,11 @@ import hashlib
 import json
 import os
 import shutil
-from collections import Counter
 from dataclasses import dataclass, field
 from typing import Callable
 
 from irodori_csv import Scenario, assign_numbers
-from irodori_csv.naming import LineAssignment, sanitize_folder
+from irodori_csv.naming import LineAssignment, folder_name_map, relative_output_path
 
 from .config import Config
 from .tts import TTSRunner
@@ -38,21 +37,6 @@ def _save_state(path: str, state: dict[str, str]) -> None:
     os.makedirs(parent, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
-
-
-def _folder_map(scenario: Scenario) -> dict[str, str]:
-    """group-by-char 用に 参照番号 -> サブフォルダ名 を作る。
-
-    キャラ名が重複する場合は「キャラ名_参照番号」で分離する（SPEC §build --group-by-char）。
-    """
-    name_counts = Counter(c.name for c in scenario.characters)
-    mapping: dict[str, str] = {}
-    for c in scenario.characters:
-        base = c.name if c.name.strip() else c.ref
-        if name_counts[c.name] > 1:
-            base = f"{base}_{c.ref}"
-        mapping[c.ref] = sanitize_folder(base)
-    return mapping
 
 
 @dataclass
@@ -102,56 +86,62 @@ class Builder:
         progress: ProgressFn | None = None,
     ) -> BuildResult:
         base_dir = out_dir or self.config.voice_out_dir
-        folders = _folder_map(scenario) if group_by_char else {}
+        folders = folder_name_map(scenario) if group_by_char else None
 
         assignments = assign_numbers(scenario)
         if chars is not None:
             assignments = [a for a in assignments if a.line.ref in chars]
 
-        # 空テキストの扱い
-        filtered: list[LineAssignment] = []
+        # 空テキスト行の扱い（例外は投げず、skip / 失敗記録で処理）
+        work: list[tuple[LineAssignment, bool]] = []  # (assignment, is_empty_error)
         for a in assignments:
             if not a.line.tts_text().strip():
                 if self.config.on_empty_text == "error":
-                    raise ValueError(f"送信テキストが空です: 参照番号={a.line.ref}")
-                continue  # skip
-            filtered.append(a)
+                    work.append((a, True))
+                # skip の場合は生成対象から外す（total にも含めない）
+                continue
+            work.append((a, False))
 
         state = _load_state(self.config.state_file)
         result = BuildResult()
-        total = len(filtered)
+        total = len(work)
 
-        for done, a in enumerate(filtered, start=1):
-            if group_by_char:
-                target = os.path.join(base_dir, folders[a.line.ref], a.filename)
-            else:
-                target = os.path.join(base_dir, a.filename)
+        for done, (a, is_empty_error) in enumerate(work, start=1):
+            rel = relative_output_path(a.filename, a.line.ref, group_by_char, folders)
+            target = os.path.join(base_dir, *rel.split("/"))
+
+            if is_empty_error:
+                result.failed += 1
+                result.failures.append((rel, "送信テキストが空です（on_empty_text=error）。"))
+                if progress:
+                    progress(done, total, rel, "FAILED")
+                continue
 
             h = self._hash_of(a)
             up_to_date = (
                 not force
                 and os.path.exists(target)
-                and state.get(a.filename) == h
+                and state.get(rel) == h
             )
             if up_to_date:
                 result.skipped += 1
                 if progress:
-                    progress(done, total, a.filename, "SKIPPED")
+                    progress(done, total, rel, "SKIPPED")
                 continue
 
             try:
                 cache_wav = self.ensure_cached(a)
                 os.makedirs(os.path.dirname(os.path.abspath(target)), exist_ok=True)
                 shutil.copyfile(cache_wav, target)
-                state[a.filename] = h
+                state[rel] = h
                 result.generated += 1
                 if progress:
-                    progress(done, total, a.filename, "GENERATED")
+                    progress(done, total, rel, "GENERATED")
             except Exception as e:  # noqa: BLE001 - 個別行の失敗は記録して継続
                 result.failed += 1
-                result.failures.append((a.filename, str(e)))
+                result.failures.append((rel, str(e)))
                 if progress:
-                    progress(done, total, a.filename, "FAILED")
+                    progress(done, total, rel, "FAILED")
 
         _save_state(self.config.state_file, state)
         return result

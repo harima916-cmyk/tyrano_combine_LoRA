@@ -7,7 +7,14 @@
 """
 
 from .model import Character, Line, Scenario
-from .naming import output_name, assign_numbers, LineAssignment
+from .naming import (
+    output_name,
+    assign_numbers,
+    LineAssignment,
+    folder_name_map,
+    relative_output_path,
+    sanitize_folder,
+)
 from .parser import read_scenario, write_scenario, ParseError
 from .validate import validate_scenario, Issue
 
@@ -18,6 +25,9 @@ __all__ = [
     "output_name",
     "assign_numbers",
     "LineAssignment",
+    "folder_name_map",
+    "relative_output_path",
+    "sanitize_folder",
     "read_scenario",
     "write_scenario",
     "ParseError",

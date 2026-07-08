@@ -1,12 +1,11 @@
-# TyranoBuilder × Irodori-TTS 連携ツール 設定例
-# 実運用時は config.yaml にコピーしてパスを埋める。
-# 仕様の詳細は SPEC.md を参照。
+# シナリオCSV → Irodori-TTS 一括音声生成ツール 設定例
+# 実運用時は config.yaml にコピーしてパスを埋める。詳細は SPEC.md を参照。
 
 project:
-  ks_dir:        "data/scenario"        # .ks を再帰探索するルート
-  voice_out_dir: "data/voice"           # 音声の最終出力先（ゲームが参照）
+  csv_file:      "scenario.csv"         # 既定の入力 CSV（--csv で上書き可）
+  voice_out_dir: "voices"               # 音声の出力先
   cache_dir:     ".irodori_cache"       # TTS キャッシュ
-  state_file:    ".irodori_state.json"  # 差分・書き戻し状態
+  state_file:    ".irodori_state.json"  # 差分判定の状態
 
 irodori:
   repo_dir:   "/path/to/Irodori-TTS"        # infer.py のあるディレクトリ
@@ -17,23 +16,15 @@ irodori:
   extra_args: []
 
 audio:
-  format: "ogg"       # voconfig の vostorage に合わせる
+  format: "ogg"       # 最終フォーマット（filename に拡張子が無い場合に付与）
   ffmpeg: "ffmpeg"
 
-tyrano:
-  voice_sebuf:     2
-  insert_voconfig: true
-  marker:          "; @irodori-tts"   # 挿入行を識別する冪等化マーカー
+on_empty_text: "skip" # skip | error
 
-# 音声化する「特定キャラ」のホワイトリスト。
-# ここに列挙したキャラのセリフだけが生成・組み込み対象になる。
+# 音声化するキャラの定義。CSV の character 列はここのキーと突合する。
 characters:
   akane:
-    names: ["akane", "あかね"]          # .ks 名前欄の表記ゆれを吸収
-    lora_adapter: "/path/to/lora/akane" # 学習済み LoRA（必須）
-    ref_wav: null                       # 任意: 併用する参照音声
-    file_prefix: "akane"                # → akane_1.ogg, akane_2.ogg ...
+    lora_adapter: "/path/to/lora/akane"   # 学習済み LoRA（必須）
+    ref_wav: null                         # 任意: 併用する参照音声
   yui:
-    names: ["yui", "ゆい"]
     lora_adapter: "/path/to/lora/yui"
-    file_prefix: "yui"

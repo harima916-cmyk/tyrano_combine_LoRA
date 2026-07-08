@@ -1,28 +1,28 @@
-# TyranoBuilder × Irodori-TTS 連携ツール 仕様書
+# シナリオCSV → Irodori-TTS 一括音声生成ツール 仕様書
 
 ## 0. この文書について
 
-TyranoBuilder（TyranoScript）で作成したノベルゲームの **特定キャラのセリフだけ** を
-[Irodori-TTS](https://github.com/Aratako/Irodori-TTS) で音声生成し、ゲームに自動で組み込む
-スタンドアロン CLI ツールの仕様を定義する。
+手動で用意した **シナリオCSV** を入力に、各行のセリフを
+[Irodori-TTS](https://github.com/Aratako/Irodori-TTS)（キャラ別 LoRA）で音声化する
+スタンドアロン CLI ツールの確定仕様。
 
-本文書は「実装前に方針を固める」ことを目的とした **確定仕様のたたき台** であり、
-未確定事項は §11 に明示する。
+当初は TyranoBuilder（TyranoScript `.ks`）との直接連携を検討したが、連携が複雑なため
+**CSV を疎結合のインターフェースとして挟む**方針に変更した。本ツールは CSV → 音声ファイル生成
+までを担い、TyranoScript の解析・書き戻しは **行わない**。
 
 ---
 
 ## 1. 目的とゴール
 
-- シナリオ（`.ks`）を入力に、対象キャラのセリフを抽出し Irodori-TTS で音声化する。
-- 生成した音声を TyranoScript のボイス管理タグ（`[voconfig]` / `[vostart]`）で
-  ゲームに自動で組み込む。
-- シナリオ修正後は **変更されたセリフだけ** を再生成する（差分ビルド）。
+- 手書きの CSV（`filename, character, text`）を入力に、対象セリフを一括で音声化する。
+- キャラごとに **学習済み LoRA アダプタ** を切り替えて生成する。
+- CSV を修正して再実行したとき、**変わった行だけ** を再生成する（差分ビルド）。
 
 ### ゴール（Done の定義）
 
-1. `build` コマンド一発で「対象キャラのセリフ音声生成 → `.ks` へ再生タグ挿入」まで完了する。
-2. 同じ入力で再実行しても結果が変わらない（冪等）。二重挿入・重複生成をしない。
-3. セリフ本文を1つ書き換えて再実行すると、そのセリフの音声だけが再生成される。
+1. `build` 一発で CSV 全行の音声ファイルが `filename` 通りに出力される。
+2. 同じ CSV で再実行しても再生成が走らない（冪等・キャッシュ hit）。
+3. ある行の `text` を書き換えて再実行すると、その行の音声だけが再生成される。
 
 ---
 
@@ -30,288 +30,206 @@ TyranoBuilder（TyranoScript）で作成したノベルゲームの **特定キ�
 
 ### 対象に含む（In Scope）
 
-- 生成済み TyranoScript `.ks` の解析（名前欄 `#name` ベースの話者判定）。
+- シナリオ CSV の読み込み・検証（`filename, character, text`）。
 - Irodori-TTS `infer.py` のサブプロセス実行による音声生成。
-- **キャラ別 LoRA アダプタ**（`--lora-adapter`）の切り替え。
-- 生成音声の `.ogg` 変換・命名・配置。
-- `[voconfig]` / `[vostart]` の `.ks` への挿入（冪等）。
-- テキストハッシュによる差分再生成キャッシュ。
+- キャラ別 LoRA アダプタ（`--lora-adapter`）の切り替え。
+- wav → 指定フォーマット（既定 `ogg`）変換・命名・配置。
+- 行内容ハッシュによる差分再生成キャッシュ。
 
-### 対象に含まない（Out of Scope）※将来拡張は §11
+### 対象に含まない（Out of Scope）※将来拡張は §10
 
-- **LoRA の学習**。キャラ別 LoRA アダプタは *学習済みのものが用意されている前提* とする。
-  本ツールは受け取ったアダプタを使って推論するのみ。
-- 感情・スタイル制御（`caption` / 絵文字）。当面は **素の生成** とする。
-- TyranoBuilder プロジェクト独自形式（`.ttb` 等）の直接解析。入力は `.ks` に限定。
-- TyranoBuilder 上の GUI / プラグイン化。実行形態はスタンドアロン CLI に限定。
+- **TyranoScript `.ks` の解析／書き戻し**（`voconfig` / `vostart` 挿入含む）。CSV より後段は手動。
+- **LoRA の学習**。キャラ別 LoRA は *学習済みのものが用意されている前提*。
+- 感情・スタイル制御（`caption` / 絵文字）。当面は素の生成。
+- CSV の自動生成（`.ks` からの抽出等）。CSV は手動で用意する。
 
 ---
 
-## 3. 用語
-
-| 用語 | 意味 |
-|---|---|
-| `.ks` | TyranoScript のシナリオファイル。KAG 系タグ記法。 |
-| 名前欄 (`#name`) | 行頭 `#` で話者名を表示する TyranoScript の記法。 |
-| セリフ | 名前欄の直後〜改ページ（`[p]` / `[l][r]`）までの本文テキスト。 |
-| LoRA アダプタ | Irodori-TTS の話者を特定キャラ声に寄せる学習済みアダプタ。 |
-| voconfig / vostart | TyranoScript のボイス管理タグ。キャラ名にボイスを紐付け連番自動再生する。 |
-| 差分ビルド | 前回から変わったセリフだけを再生成すること。 |
-
----
-
-## 4. 全体アーキテクチャ
+## 3. 全体アーキテクチャ
 
 ```
-入力                          処理パイプライン                         出力
-────────         ───────────────────────────────────────         ────────
+入力                              処理                                   出力
+───────────         ─────────────────────────────────         ──────────────
 config.yaml ─┐
-             ├─▶ 1. パース    .ks 走査 → 発話ユニット抽出
-scenario/*.ks┘   （#name → セリフ本文・行範囲）
-                    │
+             ├─▶ 1. 読込・検証   CSV パース + config 突合          （エラー時は中断）
+scenario.csv ┘      │             （character 未定義 / 重複 filename 等）
                     ▼
-                 2. フィルタ  config.characters に居る対象キャラだけ残す
-                    │
+                 2. 差分判定     行ハッシュ = f(text, character, lora, params)
+                    │            state と比較し「生成が必要な行」を選別
                     ▼
-                 3. 割り当て  キャラ → LoRA アダプタ / 出力prefix を解決
-                    │
+                 3. 生成         infer.py 実行 → wav → 変換              voice_out/
+                    │            （必要な行のみ、キャラの LoRA を適用）    akane_001.ogg ...
                     ▼
-                 4. 生成      テキストハッシュでキャッシュ照合
-                    │         miss のみ infer.py 実行 → wav → キャッシュ格納
-                    ▼
-                 5. 配置      キャラ別に位置ベースの連番採番            data/voice/
-                    │         cache(wav) → akane_{N}.ogg へ変換コピー   akane_1.ogg ...
-                    ▼
-                 6. 書き戻し  冒頭に voconfig、各セリフ前に vostart 挿入  voiced *.ks
-                              （サンプルコメントで冪等化）
-```
-
-各ステップは疎結合とし、`scan`（解析のみ）/ `build`（全工程）/ `clean` で呼び分ける。
-
----
-
-## 5. 入力仕様
-
-### 5.1 話者判定（名前欄 `#name` ベース）
-
-TyranoScript の標準的な名前欄記法を話者の根拠とする。
-
-- 行頭が `#` で始まる行を **名前欄行** とみなす。
-  - `#あかね` → 表示名 `あかね`
-  - `#akane|あかね` → キー `akane`、表示名 `あかね`（`|` 前をキーとして扱う）
-  - `#`（単独） → 名前欄クリア（＝以降は地の文／ナレーション扱い、対象外）
-- 名前欄行の **直後から改ページまで** を、その話者のセリフ本文とする。
-  - 改ページ判定: `[p]`, `[l]`, `[r]`, 次の名前欄行 `#...`, `[cm]`, `[er]`, ラベル `*label`, タグ単独行。
-  - 本文中に含まれるインラインタグ（`[ruby]` 等）は **TTS 用テキストからは除去**し、
-    書き戻し位置の特定には元の行範囲を使う。
-- 名前欄のキー（`akane` / `あかね`）を `config.characters` の `names` と突き合わせて
-  キャラを同定する（表記ゆれ吸収）。
-
-> 話者判定は `.ks` の書き方に依存する。TyranoBuilder の実出力サンプルが手に入り次第、
-> 上記ルールを実サンプルで検証・調整する（§11-A）。
-
-### 5.2 発話ユニット（内部データ）
-
-パーサは各セリフを次の構造に正規化する。
-
-```jsonc
-{
-  "file": "scenario/ch01.ks",   // 相対パス
-  "char_key": "akane",          // config で解決したキャラキー
-  "display_name": "あかね",
-  "text_raw":  "こんにちは。[ruby text=きょう]今日[endruby]はいい天気ですね。",
-  "text_tts":  "こんにちは。今日はいい天気ですね。",  // タグ除去後（TTS入力・ハッシュ対象）
-  "line_start": 42,             // 名前欄行 or セリフ開始行（0始まり）
-  "line_end":   43              // セリフ末尾行
-}
+                 4. 記録         state を更新（filename → hash）          .irodori_state.json
 ```
 
 ---
 
-## 6. 設定ファイル（config.yaml）
+## 4. 入力仕様
+
+### 4.1 シナリオCSV
+
+- 文字コード **UTF-8**、**ヘッダ行必須**。標準 CSV クォート規則（カンマ・改行はダブルクォートで囲む）。
+- 列（順不同、ヘッダ名で識別）:
+
+| 列 | 必須 | 内容 |
+|---|---|---|
+| `filename` | ✔ | 出力音声のファイル名。拡張子は省略可（省略時は `audio.format` を付与）。 |
+| `character` | ✔ | キャラキー。`config.characters` に定義され、LoRA を解決する。 |
+| `text` | ✔ | 音声化するセリフ本文（TTS 入力・ハッシュ対象）。 |
+
+例（`scenario.example.csv`）:
+
+```csv
+filename,character,text
+akane_001,akane,こんにちは。今日はいい天気ですね。
+akane_002,akane,えっ、それ本当ですか？
+yui_001,yui,おはよう。今日もがんばろうね。
+```
+
+### 4.2 検証ルール（`build` / `validate` で実施、違反は中断）
+
+- `filename` の **重複禁止**（拡張子正規化後で判定）。
+- `character` が `config.characters` に **存在すること**。
+- `text` が **空でないこと**（空行は警告してスキップ、設定で挙動選択可）。
+- 参照する LoRA アダプタのパスが **存在すること**。
+- `filename` に OS 依存の不正文字（`/ \ : * ? " < > |`）を含まないこと。
+
+---
+
+## 5. 設定ファイル（config.yaml）
 
 ```yaml
 project:
-  ks_dir:        "data/scenario"     # .ks を再帰探索するルート
-  voice_out_dir: "data/voice"        # 音声の最終出力先（ゲームが参照）
-  cache_dir:     ".irodori_cache"    # TTS キャッシュ（コミット任意）
-  state_file:    ".irodori_state.json"  # 差分・書き戻し状態
+  csv_file:      "scenario.csv"         # 既定の入力 CSV（--csv で上書き可）
+  voice_out_dir: "voices"               # 音声の出力先
+  cache_dir:     ".irodori_cache"       # TTS キャッシュ
+  state_file:    ".irodori_state.json"  # 差分判定の状態
 
 irodori:
-  repo_dir:   "/path/to/Irodori-TTS" # infer.py のあるディレクトリ
-  runner:     "uv run --no-sync python"  # 実行コマンド前置
+  repo_dir:   "/path/to/Irodori-TTS"        # infer.py のあるディレクトリ
+  runner:     "uv run --no-sync python"     # 実行コマンド前置
   checkpoint: "Aratako/Irodori-TTS-500M-v3"
-  num_steps:  32                     # infer.py --num-steps
-  seconds:    null                   # 任意: 出力長固定
-  extra_args: []                     # infer.py への追加引数
+  num_steps:  32
+  seconds:    null
+  extra_args: []
 
 audio:
-  format:   "ogg"                    # 最終フォーマット（voconfig に合わせ ogg）
-  ffmpeg:   "ffmpeg"                 # wav→ogg 変換に使用
+  format: "ogg"       # 最終フォーマット（filename 拡張子省略時に付与）
+  ffmpeg: "ffmpeg"    # wav→他形式の変換に使用
 
-tyrano:
-  voice_sebuf:   2                   # ボイス用 SE バッファ番号
-  insert_voconfig: true             # 冒頭 voconfig 自動挿入の有無
-  # 挿入マーカー（冪等化用サンプルコメント）
-  marker: "; @irodori-tts"
+on_empty_text: "skip"  # skip | error
 
-# 対象キャラのホワイトリスト（ここに無いキャラは音声化しない）
+# 音声化するキャラの定義。character 列はここのキーと突合する。
 characters:
   akane:
-    names: ["akane", "あかね"]        # .ks 名前欄の表記ゆれを吸収
-    lora_adapter: "/path/to/lora/akane"  # 学習済み LoRA（必須）
-    ref_wav: null                    # 任意: LoRA と併用する参照音声
-    file_prefix: "akane"             # → akane_{number}.ogg
+    lora_adapter: "/path/to/lora/akane"   # 学習済み LoRA（必須）
+    ref_wav: null                         # 任意: 併用する参照音声
   yui:
-    names: ["yui", "ゆい"]
     lora_adapter: "/path/to/lora/yui"
-    file_prefix: "yui"
 ```
-
-- `characters` に列挙したキャラ **のみ** 音声化する（＝「特定キャラだけ」の実現方法）。
-- `names` は名前欄キー・表示名のどちらとも一致判定する。
 
 ---
 
-## 7. 音声生成（Irodori-TTS 連携）
+## 6. 音声生成（Irodori-TTS 連携）
 
-### 7.1 呼び出し
+### 6.1 呼び出し
 
-各キャッシュミスのセリフごとに `infer.py` をサブプロセス実行する。
+生成が必要な行ごとに `infer.py` をサブプロセス実行する。
 
 ```
 {runner} {repo_dir}/infer.py \
   --hf-checkpoint {checkpoint} \
-  --text "{text_tts}" \
-  --lora-adapter {characters[k].lora_adapter} \
-  [--ref-wav {characters[k].ref_wav}] \
+  --text "{text}" \
+  --lora-adapter {characters[character].lora_adapter} \
+  [--ref-wav {characters[character].ref_wav}] \
   [--num-steps {num_steps}] [--seconds {seconds}] {extra_args} \
   --output-wav {cache_dir}/{hash}.wav
 ```
 
-- 感情 `caption` は当面付与しない（§2 Out of Scope）。
-- 生成物は一旦 **wav** で受け、`ffmpeg` で `audio.format`（既定 `ogg`）へ変換する。
+- `caption`（感情）は当面付与しない。
+- 生成物は wav で受け、`audio.format` が `wav` 以外なら `ffmpeg` で変換して
+  `voice_out_dir/{filename}` へ配置する。
 
-### 7.2 キャッシュ鍵（差分再生成の中核）
+### 6.2 キャッシュ鍵と差分判定
 
 ```
-hash = sha256( text_tts + "\0" + char_key + "\0" + lora_adapter + "\0" + tts_params )
+hash = sha256( text + "\0" + character + "\0" + lora_adapter + "\0" + tts_params )
 ```
 
 - `tts_params` = checkpoint / num_steps / seconds / extra_args を正規化した文字列。
-- キャッシュは `cache_dir/{hash}.wav`。**hit なら infer.py を実行しない**。
-- セリフ本文・キャラ・LoRA・生成パラメータのいずれかが変われば hash が変わり再生成される。
+- `state_file` は `filename → hash` を保持する。
+- 各行について:
+  - `state[filename] == hash` かつ出力ファイルが存在 → **スキップ**。
+  - それ以外 → 生成（cache に `{hash}.wav` があれば infer.py を省略し変換のみ）。
+- `--force` で state を無視して全行再生成。
+
+> 内容ハッシュを持つことで、行の順番入れ替えや他行の編集に影響されず、
+> **実際に text/character/LoRA が変わった行だけ** が再生成される。
 
 ---
 
-## 8. ファイル命名・配置と連番（キャッシュとの分離）
-
-`[vostart]` は **キャラ単位で連番を自動インクリメント** して `akane_1.ogg`,
-`akane_2.ogg`, … を順に再生する。しかし連番はシナリオ上の *出現順（位置）* に依存するため、
-セリフを1行挿入すると以降の番号が全てずれる。これを素朴に採番するとキャッシュが総崩れになる。
-
-そこで **2層に分離** する。
-
-1. **TTS キャッシュ層（内容ベース）**: `cache_dir/{hash}.wav`
-   - 鍵はテキスト内容（§7.2）。位置に依存しない。高コストな推論結果を保持。
-2. **配置層（位置ベース）**: `voice_out_dir/{prefix}_{N}.ogg`
-   - `N` はキャラごとにシナリオ出現順で 1 から採番。
-   - 各セリフについて「対応する `hash` のキャッシュ wav を `{prefix}_{N}.ogg` へ変換コピー」する。
-
-これにより、行挿入で番号がずれても **再コピー（安価）だけで済み、推論（高コスト）は
-内容が変わったセリフのみ** となる。配置層は毎ビルドで作り直してよい。
-
-### 命名規則
+## 7. 出力仕様
 
 | 対象 | 例 |
 |---|---|
+| 最終音声 | `voices/akane_001.ogg`, `voices/yui_001.ogg` |
 | キャッシュ | `.irodori_cache/3f9a...c1.wav` |
-| 最終音声 | `data/voice/akane_1.ogg`, `data/voice/akane_2.ogg` |
-| vostorage テンプレート | `akane_{number}.ogg` |
+| 状態 | `.irodori_state.json` |
+
+- `filename` に拡張子があればそれを優先、なければ `audio.format` を付与。
+- 出力先ディレクトリは自動作成する。
 
 ---
 
-## 9. 書き戻し（TyranoScript への挿入）
-
-### 9.1 挿入内容
-
-- **冒頭（または各キャラ初出直前）に一度** voconfig を挿入:
-
-  ```
-  [voconfig sebuf=2 name="akane" vostorage="akane_{number}.ogg" number=1]
-  ```
-
-- **各対象セリフの名前欄直後に** vostart を挿入:
-
-  ```
-  #あかね
-  [vostart]
-  こんにちは。今日はいい天気ですね。[p]
-  ```
-
-  `[vostart]` は voconfig で設定した現在番号のファイルを再生し、番号を +1 する。
-  → 生成側の連番（§8）と一致する。
-
-### 9.2 冪等性（二重挿入の防止）
-
-- 本ツールが挿入する行には必ず **サンプルコメント marker**（既定 `; @irodori-tts`）を付す。
-  ```
-  [voconfig sebuf=2 name="akane" vostorage="akane_{number}.ogg" number=1]  ; @irodori-tts
-  [vostart]  ; @irodori-tts
-  ```
-- 書き戻しは「**既存の marker 付き行を全削除 → 最新状態で再挿入**」の順で行う。
-  これにより再実行しても重複せず、marker の無い（＝ユーザー手書きの）行は一切触らない。
-- 破壊防止として、`--dry-run` で挿入差分（unified diff）をプレビューできる。
-
-### 9.3 オート送り・完了待ち
-
-`[voconfig]` 方式はオートモード時にボイス再生完了を待つ（`[playse]` 単体との差分）。
-本ツールはタグ挿入のみを担当し、待ち挙動は TyranoScript の voconfig 仕様に委ねる。
-
----
-
-## 10. CLI 仕様
+## 8. CLI 仕様
 
 ```
-irodori-tyrano <command> [options]
+irodori-tts-batch <command> [options]
 
 commands:
-  scan     .ks を解析し、対象セリフ件数・キャラ別内訳を表示（生成も書き戻しもしない）
-  build    差分ビルド: 音声生成（差分のみ）→ 配置 → .ks 書き戻し
-  clean    生成音声 / キャッシュ / state を削除
+  validate  CSV と config を検証（生成しない）。件数・キャラ別内訳を表示。
+  build     差分ビルド: 必要な行のみ生成 → 配置 → state 更新。
+  clean     出力音声 / キャッシュ / state を削除。
 
 common options:
-  -c, --config PATH    設定ファイル（既定: ./config.yaml）
-  --chars a,b          対象キャラを一時的に限定（config のサブセット）
-  --dry-run            生成・書き戻しをせず計画と diff を表示
-  --force              キャッシュを無視して全セリフ再生成
-  -v, --verbose        詳細ログ
+  -c, --config PATH   設定ファイル（既定: ./config.yaml）
+  --csv PATH          入力 CSV（既定: config.project.csv_file）
+  --chars a,b         対象キャラを一時的に限定
+  --dry-run           生成せず「生成/スキップ予定」の一覧だけ表示
+  --force             キャッシュ・state を無視して全生成
+  -v, --verbose       詳細ログ
 ```
 
 ### 想定フロー
 
 ```
-$ irodori-tyrano scan          # まず対象セリフ数を確認
-$ irodori-tyrano build --dry-run   # 挿入 diff をプレビュー
-$ irodori-tyrano build         # 生成 + 書き戻し
-# ... シナリオ修正 ...
-$ irodori-tyrano build         # 変わったセリフだけ再生成
+$ irodori-tts-batch validate            # CSV/configの妥当性と件数を確認
+$ irodori-tts-batch build --dry-run     # 生成対象行のプレビュー
+$ irodori-tts-batch build               # 音声生成
+# ... CSV を修正 ...
+$ irodori-tts-batch build               # 変わった行だけ再生成
 ```
 
 ---
 
-## 11. 未確定事項・将来拡張
+## 9. エラーハンドリング方針
 
-- **A. 話者判定の実サンプル検証**: TyranoBuilder 実出力の `.ks` を入手し、名前欄の実際の
-  書式（`#name` / `#name|jname` / `[chara_show]` 併用有無）でパーサを確定する。
-- **B. LoRA 未整備時のフォールバック**: 学習済み LoRA が無いキャラを `--ref-wav`（参照音声）
-  だけで生成する経路を残すか。
-- **C. 感情・スタイル**: VoiceDesign チェックポイント + `caption` / 末尾絵文字による感情制御。
-- **D. Irodori-TTS-Server（OpenAI 互換 API）対応**: `infer.py` 直叩きに加え、
-  `POST /v1/audio/speech` 経由の生成バックエンドを差し替え可能にする。
-- **E. 生成バックエンドの抽象化**: TTS 呼び出しをインターフェース化し LoRA / 参照音声 / API を
-  切替可能にする。
-- **F. TyranoBuilder GUI / プラグイン化**。
+- 検証エラー（未定義 character / 重複 filename / LoRA 不在）は **生成前に一括報告して中断**。
+- 生成中に個別行が失敗した場合は、その行を記録してスキップし、末尾で失敗一覧を表示
+  （`--fail-fast` で即中断も選べるようにする）。
+- 途中中断しても、成功済みの行は state に記録され、再実行時にスキップされる。
+
+---
+
+## 10. 将来拡張
+
+- **A. CSV 自動生成**: TyranoScript `.ks` から `filename, character, text` を抽出する
+  補助コマンド（旧連携案の名前欄 `#name` パーサを流用）。
+- **B. tyrano 組み込み**: 生成結果を `voconfig` / `vostart` で `.ks` へ書き戻す後段。
+- **C. 感情・スタイル**: `caption` 列の追加と VoiceDesign チェックポイント対応。
+- **D. LoRA 未整備時のフォールバック**: 参照音声（`--ref-wav`）のみでの生成。
+- **E. 生成バックエンド抽象化**: `infer.py` 直叩き / Irodori-TTS-Server（OpenAI 互換 API）の切替。
 
 ---
 
@@ -319,4 +237,3 @@ $ irodori-tyrano build         # 変わったセリフだけ再生成
 
 - Irodori-TTS 本体: https://github.com/Aratako/Irodori-TTS
 - Irodori-TTS-Server（OpenAI 互換 API）: https://github.com/Aratako/Irodori-TTS-Server
-- TyranoScript タグリファレンス: https://tyrano.jp/tag/v4

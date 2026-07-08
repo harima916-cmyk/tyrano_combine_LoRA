@@ -245,6 +245,7 @@ common options:
 build options:
   --out-dir PATH      音声の出力先を上書き（既定: config.project.voice_out_dir）
   --copy-csv          出力先フォルダへ入力 CSV を scenario.csv としてコピー（バンドル出力）
+  --group-by-char     音声をキャラ名のサブフォルダに分けて出力（一括生成の既定）
 
 preview options:
   --text STR          送信テキスト（顔文字付き）
@@ -256,18 +257,28 @@ preview options:
 
 GUI の「一括生成（フォルダ出力）」（`GUI_SPEC.md` §5.5）から利用する。
 指定フォルダに音声を書き出し、`--copy-csv` で元 CSV を同梱して**再現可能なバンドル**にする。
+一括生成では `--group-by-char` により音声を **キャラごとのサブフォルダ** に分ける。
 
 ```
 <出力先フォルダ>/
   scenario.csv        # 生成に使った CSV のコピー（--copy-csv 時）
-  akane_1.wav
-  akane_2.wav
-  yui_1.wav
-  ...
+  あかね/             # キャラ名のサブフォルダ（--group-by-char 時）
+    akane_1.wav
+    akane_2.wav
+  ゆい/
+    yui_1.wav
+    yui_2.wav
 ```
 
+- サブフォルダ名は **キャラ名**。OS 不正文字（`/ \ : * ? " < > |`）は `_` に置換する。
+- `--group-by-char` を付けない場合は従来どおり出力先直下にフラット配置する。
+- キャラ名が重複すると同一フォルダに集約されてしまうため、`--group-by-char` 時は
+  **キャラ名の一意性を検証**し、重複していれば警告し `キャラ名_参照番号` で分ける。
 - 新しい空フォルダへ出力してもキャッシュ（内容ハッシュ）が効くため、未変更分は
   infer.py を再実行せず cache からコピーするだけで済む。
+
+> 補足: 将来 tyrano 書き戻し（`SPEC.md` §10-B）を行う場合、サブフォルダ分割時は
+> `voconfig` の `vostorage` パスにサブフォルダを含める必要がある。
 
 ### `preview`（お試し生成）
 

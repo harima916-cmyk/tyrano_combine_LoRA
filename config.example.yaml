@@ -1,9 +1,10 @@
 # シナリオCSV → Irodori-TTS 一括音声生成ツール 設定例
 # 実運用時は config.yaml にコピーしてパスを埋める。詳細は SPEC.md を参照。
+# キャラ定義・LoRA パス・生成ファイル名は CSV 側で定義する（config には持たない）。
 
 project:
   csv_file:      "scenario.csv"         # 既定の入力 CSV（--csv で上書き可）
-  voice_out_dir: "voices"               # 音声の出力先
+  voice_out_dir: "voices"               # 音声(.wav)の出力先
   cache_dir:     ".irodori_cache"       # TTS キャッシュ
   state_file:    ".irodori_state.json"  # 差分判定の状態
 
@@ -18,16 +19,4 @@ irodori:
   seconds:    null
   extra_args: []
 
-audio:
-  format: "ogg"       # 最終フォーマット（filename に拡張子が無い場合に付与）
-  ffmpeg: "ffmpeg"
-
 on_empty_text: "skip" # skip | error
-
-# 音声化するキャラの定義。CSV の character 列はここのキーと突合する。
-characters:
-  akane:
-    lora_adapter: "/path/to/lora/akane"   # 学習済み LoRA（必須）
-    ref_wav: null                         # 任意: 併用する参照音声
-  yui:
-    lora_adapter: "/path/to/lora/yui"

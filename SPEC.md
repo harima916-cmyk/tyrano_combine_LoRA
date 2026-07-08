@@ -2,27 +2,28 @@
 
 ## 0. この文書について
 
-手動で用意した **シナリオCSV** を入力に、各行のセリフを
+手動で用意した **シナリオCSV** を入力に、各セリフを
 [Irodori-TTS](https://github.com/Aratako/Irodori-TTS)（キャラ別 LoRA）で音声化する
 スタンドアロン CLI ツールの確定仕様。
 
-当初は TyranoBuilder（TyranoScript `.ks`）との直接連携を検討したが、連携が複雑なため
-**CSV を疎結合のインターフェースとして挟む**方針に変更した。本ツールは CSV → 音声ファイル生成
-までを担い、TyranoScript の解析・書き戻しは **行わない**。
+TyranoBuilder（`.ks`）との直接連携は複雑なため、間に CSV を疎結合インターフェースとして挟む。
+本ツールは **CSV → 音声ファイル（.wav）生成まで** を担い、`.ks` の解析・書き戻しは行わない。
+ただし出力ファイル名は **TyranoScript が読み込める命名**（ゼロ埋めなし連番）にする。
 
 ---
 
 ## 1. 目的とゴール
 
-- 手書きの CSV（`filename, character, text`）を入力に、対象セリフを一括で音声化する。
-- キャラごとに **学習済み LoRA アダプタ** を切り替えて生成する。
-- CSV を修正して再実行したとき、**変わった行だけ** を再生成する（差分ビルド）。
+- 手書きの CSV を入力に、対象セリフを一括で音声化する。
+- CSV 内でキャラごとに **学習済み LoRA アダプタ** を定義し、切り替えて生成する。
+- Irodori-TTS へは **顔文字（絵文字）付きテキスト** を送り、感情・話し方を制御する。
+- CSV を修正して再実行したとき、**変わったセリフだけ** を再生成する（差分ビルド）。
 
 ### ゴール（Done の定義）
 
-1. `build` 一発で CSV 全行の音声ファイルが `filename` 通りに出力される。
+1. `build` 一発で全セリフの `.wav` が命名規則通りに出力される。
 2. 同じ CSV で再実行しても再生成が走らない（冪等・キャッシュ hit）。
-3. ある行の `text` を書き換えて再実行すると、その行の音声だけが再生成される。
+3. あるセリフの送信テキストを書き換えて再実行すると、その音声だけが再生成される。
 
 ---
 
@@ -30,18 +31,18 @@
 
 ### 対象に含む（In Scope）
 
-- シナリオ CSV の読み込み・検証（`filename, character, text`）。
-- Irodori-TTS `infer.py` のサブプロセス実行による音声生成。
+- シナリオ CSV（2 セクション構成）の読み込み・検証。
+- Irodori-TTS `infer.py` のサブプロセス実行による音声生成（`--text` に顔文字付きテキスト）。
 - キャラ別 LoRA アダプタ（`--lora-adapter`）の切り替え。
-- wav → 指定フォーマット（既定 `ogg`）変換・命名・配置。
-- 行内容ハッシュによる差分再生成キャッシュ。
+- `.wav` 出力・ゼロ埋めなし連番による命名・配置。
+- 送信テキスト内容ハッシュによる差分再生成キャッシュ。
 
 ### 対象に含まない（Out of Scope）※将来拡張は §10
 
-- **TyranoScript `.ks` の解析／書き戻し**（`voconfig` / `vostart` 挿入含む）。CSV より後段は手動。
+- **TyranoScript `.ks` の解析／書き戻し**（`voconfig` / `vostart` 挿入含む）。
 - **LoRA の学習**。キャラ別 LoRA は *学習済みのものが用意されている前提*。
-- 感情・スタイル制御（`caption` / 絵文字）。当面は素の生成。
 - CSV の自動生成（`.ks` からの抽出等）。CSV は手動で用意する。
+- 顔文字の自動付与。感情を表す顔文字は **CSV の送信テキスト列に人手で書く**。
 
 ---
 
@@ -51,98 +52,113 @@
 入力                              処理                                   出力
 ───────────         ─────────────────────────────────         ──────────────
 config.yaml ─┐
-             ├─▶ 1. 読込・検証   CSV パース + config 突合          （エラー時は中断）
-scenario.csv ┘      │             （character 未定義 / 重複 filename 等）
+             ├─▶ 1. 読込・検証   CSV 2セクションをパース             （エラー時は中断）
+scenario.csv ┘      │             定義部↔セリフ部を参照番号で結合
                     ▼
-                 2. 差分判定     行ハッシュ = f(text, character, lora, params)
-                    │            state と比較し「生成が必要な行」を選別
+                 2. 採番・差分   キャラ別に連番採番（1,2,3,…）
+                    │            送信テキストのハッシュで差分判定
                     ▼
-                 3. 生成         infer.py 実行 → wav → 変換              voice_out/
-                    │            （必要な行のみ、キャラの LoRA を適用）    akane_001.ogg ...
+                 3. 生成         infer.py 実行（顔文字付きtext + LoRA）  voices/
+                    │            必要な行のみ → .wav                     akane_1.wav ...
                     ▼
-                 4. 記録         state を更新（filename → hash）          .irodori_state.json
+                 4. 記録         state を更新（出力名 → hash）           .irodori_state.json
 ```
 
 ---
 
 ## 4. 入力仕様：シナリオCSV（確定テンプレート）
 
-### 4.1 ファイル形式
+### 4.1 全体構成（1 ファイル・2 セクション）
 
-| 項目 | 確定仕様 |
-|---|---|
-| 文字コード | **UTF-8**（BOM 有無どちらも読める）。既定 `utf-8-sig`。`config.csv.encoding` で `cp932`(Shift-JIS) 等に切替可。 |
-| 改行 | LF / CRLF どちらも可。 |
-| 区切り | カンマ `,`。 |
-| クォート | 標準 CSV 規則。カンマ・改行・ダブルクォートを含む値は `"` で囲む（`"` 自身は `""` にエスケープ）。 |
-| ヘッダ行 | **1 行目に必須**。列はヘッダ名で識別（順不同）。 |
-| 空行 | スキップ。 |
+CSV は 1 ファイル内に **2 つのセクション** を持つ。セクションは **空行で区切る**。
+各セクションは先頭に自身のヘッダ行を持ち、ヘッダの列名でセクションを識別する。
 
-### 4.2 列定義
+```csv
+キャラ名,参照番号,LoRAフォルダ,生成ファイルヘッド
+あかね,1,C:\lora\akane,akane_
+ゆい,2,C:\lora\yui,yui_
 
-**必須 3 列**（この 3 つが揃っていること。順序は自由）:
+参照番号,テキスト,送信テキスト
+1,こんにちは。今日はいい天気ですね。,こんにちは。今日はいい天気ですね。😊
+1,えっ、それ本当ですか？,えっ、それ本当ですか？😲
+2,おはよう。今日もがんばろうね。,おはよう。今日もがんばろうね。☀️
+```
+
+- 上（`LoRAフォルダ` 列を含む方）＝ **キャラクター定義セクション**。
+- 下（`送信テキスト` 列を含む方）＝ **セリフセクション**。
+- セクションの順序は問わない（ヘッダ列名で判定する）。
+
+> 補足: 2 テーブルを 1 ファイルに置くのが編集しづらい場合、定義とセリフを
+> **別々の 2 ファイル** に分ける構成にも切り替え可能（§10-A）。
+
+### 4.2 キャラクター定義セクション
 
 | 列 | 必須 | 内容 |
 |---|---|---|
-| `filename` | ✔ | 出力音声のファイル名。§4.3 の規約に従う。 |
-| `character` | ✔ | キャラキー。`config.characters` に定義され、LoRA を解決する。 |
-| `text` | ✔ | 音声化するセリフ本文（TTS 入力・ハッシュ対象）。前後空白はトリム。 |
+| `キャラ名` | ✔ | 人間可読の表示名（ツールはログ表示に使用）。 |
+| `参照番号` | ✔ | キャラの識別子。セリフ側と結合する **キー**。一意であること。 |
+| `LoRAフォルダ` | ✔ | 学習済み LoRA アダプタのフォルダパス。`--lora-adapter` に渡す。 |
+| `生成ファイルヘッド` | ✔ | 出力ファイル名の先頭（プレフィックス）。§4.4 参照。 |
 
-**補助列（任意）**: 上記以外の列（例 `note`, `scene`, `caption`）は **無視して許容**する。
-Excel 等でメモ列を自由に追加してよい。`validate` 時に「無視した列名」を情報表示し、
-ヘッダの打ち間違い（例 `charcter`）に気づけるようにする。
+### 4.3 セリフセクション
 
-### 4.3 filename の規約
+| 列 | 必須 | 内容 |
+|---|---|---|
+| `参照番号` | ✔ | 定義セクションの `参照番号` を指す。存在しない番号はエラー。 |
+| `テキスト` | ✔ | 原文（人間可読・確認用）。 |
+| `送信テキスト` | ✔ | Irodori-TTS へ送る **顔文字付き** テキスト。`infer.py --text` に渡す。 |
 
-- **推奨**: 拡張子なし ＋ `キャラ_連番3桁`（例 `akane_001`, `akane_002`, `yui_001`）。
-  - 連番 3 桁でファイル一覧の並び順が安定する。
-  - 拡張子は付けない（`config.audio.format` から自動付与）。
-- 拡張子を明示してもよい（例 `akane_001.ogg`）。その場合はそれを優先。
-- 制約: **重複禁止**（拡張子正規化後で判定）／ OS 不正文字 `/ \ : * ? " < > |` 禁止。
+- 実際に TTS へ渡すのは **`送信テキスト`**。空の場合は `テキスト` をフォールバックに使う。
+- 行の並び順が、そのキャラの音声の連番順になる（§4.4）。
 
-### 4.4 テンプレート
+### 4.4 出力ファイル名の規約
 
-`scenario.example.csv`（記入例）:
+- ファイル名 = **`生成ファイルヘッド` + 連番 + `.wav`**。
+- 連番は **キャラごと**に、セリフセクションの **出現順で 1 から** 振る。
+- 連番は **ゼロ埋めしない**（`1, 2, …, 9, 10, 11, …`）。
+  - 理由: TyranoScript の `voconfig` は `{number}` を 1,2,3… で展開するため、
+    `001` のようなゼロ埋め名だと読み込めない。
+- 拡張子は `.wav`（infer.py の出力が wav のため。変換は行わない）。
 
-```csv
-filename,character,text
-akane_001,akane,こんにちは。今日はいい天気ですね。
-akane_002,akane,えっ、それ本当ですか？
-yui_001,yui,おはよう。今日もがんばろうね。
-yui_002,yui,"ふふっ、それはね、ひみつ。"
-```
+例: `生成ファイルヘッド = "akane_"`、あかねのセリフが 3 行
+→ `akane_1.wav`, `akane_2.wav`, `akane_3.wav`
 
-`scenario.template.csv`（ヘッダだけの空テンプレート）:
+### 4.5 ファイル形式
 
-```csv
-filename,character,text
-```
+| 項目 | 確定仕様 |
+|---|---|
+| 文字コード | **UTF-8**（BOM 有無どちらも読める）。既定 `utf-8-sig`。`config.csv.encoding` で `cp932`(Shift-JIS) 等に切替可（Excel 想定）。 |
+| 改行 | LF / CRLF どちらも可。 |
+| 区切り | カンマ `,`。 |
+| クォート | 標準 CSV 規則。カンマ・改行・`"` を含む値は `"` で囲む（`"` は `""` にエスケープ）。 |
+| セクション区切り | 空行。 |
 
-### 4.5 検証ルール（`validate` / `build` で実施）
+### 4.6 検証ルール（`validate` / `build` で実施、違反は中断）
 
-生成前に全行を検査し、違反があれば **一括報告して中断**する。
-
-- 必須列 `filename` / `character` / `text` がヘッダに揃っていること。
-- `filename` の重複が無いこと（拡張子正規化後）。
-- `filename` に OS 不正文字を含まないこと。
-- `character` が `config.characters` に存在すること。
-- 参照する LoRA アダプタのパスが実在すること。
-- `text` が空でないこと（空は `config.on_empty_text` に従い skip / error）。
-- （情報）必須 3 列以外の無視した列名を一覧表示。
+- 両セクションのヘッダが揃っていること（定義=`参照番号`/`LoRAフォルダ`/`生成ファイルヘッド`、
+  セリフ=`参照番号`/`送信テキスト`）。
+- 定義セクションの `参照番号` に **重複が無い** こと。
+- セリフの `参照番号` が定義に **存在する** こと。
+- `LoRAフォルダ` が実在すること。
+- `生成ファイルヘッド` から生成される出力名に **重複・OS 不正文字**（`/ \ : * ? " < > |`。
+  ヘッド自体のパス区切りは対象外）が無いこと。
+- `送信テキスト`（空なら `テキスト`）が空でないこと（`config.on_empty_text` に従う）。
 
 ---
 
 ## 5. 設定ファイル（config.yaml）
 
+キャラ定義・LoRA パスは **CSV 側** に移動したため、config は実行環境の設定のみを持つ。
+
 ```yaml
 project:
   csv_file:      "scenario.csv"         # 既定の入力 CSV（--csv で上書き可）
-  voice_out_dir: "voices"               # 音声の出力先
+  voice_out_dir: "voices"               # 音声(.wav)の出力先
   cache_dir:     ".irodori_cache"       # TTS キャッシュ
   state_file:    ".irodori_state.json"  # 差分判定の状態
 
 csv:
-  encoding: "utf-8-sig"  # BOM 有無どちらの UTF-8 も読める。cp932(Shift-JIS)等も可
+  encoding: "utf-8-sig"  # UTF-8(BOM有無どちらも可)。日本語Excel保存なら cp932 も可
 
 irodori:
   repo_dir:   "/path/to/Irodori-TTS"        # infer.py のあるディレクトリ
@@ -152,19 +168,7 @@ irodori:
   seconds:    null
   extra_args: []
 
-audio:
-  format: "ogg"       # 最終フォーマット（filename 拡張子省略時に付与）
-  ffmpeg: "ffmpeg"    # wav→他形式の変換に使用
-
 on_empty_text: "skip"  # skip | error
-
-# 音声化するキャラの定義。character 列はここのキーと突合する。
-characters:
-  akane:
-    lora_adapter: "/path/to/lora/akane"   # 学習済み LoRA（必須）
-    ref_wav: null                         # 任意: 併用する参照音声
-  yui:
-    lora_adapter: "/path/to/lora/yui"
 ```
 
 ---
@@ -173,37 +177,36 @@ characters:
 
 ### 6.1 呼び出し
 
-生成が必要な行ごとに `infer.py` をサブプロセス実行する。
+生成が必要なセリフごとに `infer.py` をサブプロセス実行する。
 
 ```
 {runner} {repo_dir}/infer.py \
   --hf-checkpoint {checkpoint} \
-  --text "{text}" \
-  --lora-adapter {characters[character].lora_adapter} \
-  [--ref-wav {characters[character].ref_wav}] \
+  --text "{送信テキスト}" \
+  --lora-adapter {定義[参照番号].LoRAフォルダ} \
   [--num-steps {num_steps}] [--seconds {seconds}] {extra_args} \
   --output-wav {cache_dir}/{hash}.wav
 ```
 
-- `caption`（感情）は当面付与しない。
-- 生成物は wav で受け、`audio.format` が `wav` 以外なら `ffmpeg` で変換して
-  `voice_out_dir/{filename}` へ配置する。
+- 感情・話し方は `送信テキスト` 内の顔文字（絵文字）で制御する（Irodori-TTS の絵文字スタイル制御）。
+- 生成物は `.wav`。変換はしないため `voice_out_dir/{ヘッド}{連番}.wav` へコピー配置する。
 
 ### 6.2 キャッシュ鍵と差分判定
 
 ```
-hash = sha256( text + "\0" + character + "\0" + lora_adapter + "\0" + tts_params )
+hash = sha256( 送信テキスト + "\0" + 参照番号 + "\0" + LoRAフォルダ + "\0" + tts_params )
 ```
 
 - `tts_params` = checkpoint / num_steps / seconds / extra_args を正規化した文字列。
-- `state_file` は `filename → hash` を保持する。
-- 各行について:
-  - `state[filename] == hash` かつ出力ファイルが存在 → **スキップ**。
-  - それ以外 → 生成（cache に `{hash}.wav` があれば infer.py を省略し変換のみ）。
-- `--force` で state を無視して全行再生成。
+- `state_file` は `出力ファイル名 → hash` を保持する。
+- 各セリフについて:
+  - `state[出力名] == hash` かつ出力ファイルが存在 → **スキップ**。
+  - それ以外 → 生成（cache に `{hash}.wav` があれば infer.py を省略しコピーのみ）。
+- `--force` で state を無視して全生成。
 
-> 内容ハッシュを持つことで、行の順番入れ替えや他行の編集に影響されず、
-> **実際に text/character/LoRA が変わった行だけ** が再生成される。
+> 連番（出力名）は出現位置に依存するため行挿入でずれるが、キャッシュ鍵は
+> **送信テキスト内容** なので、実際に内容が変わったセリフだけが再生成される。
+> 位置ずれは安価なコピーだけで吸収する（生成結果は内容ハッシュで再利用）。
 
 ---
 
@@ -211,11 +214,10 @@ hash = sha256( text + "\0" + character + "\0" + lora_adapter + "\0" + tts_params
 
 | 対象 | 例 |
 |---|---|
-| 最終音声 | `voices/akane_001.ogg`, `voices/yui_001.ogg` |
+| 最終音声 | `voices/akane_1.wav`, `voices/akane_2.wav`, `voices/yui_1.wav` |
 | キャッシュ | `.irodori_cache/3f9a...c1.wav` |
-| 状態 | `.irodori_state.json` |
+| 状態 | `.irodori_state.json`（`出力名 → hash`） |
 
-- `filename` に拡張子があればそれを優先、なければ `audio.format` を付与。
 - 出力先ディレクトリは自動作成する。
 
 ---
@@ -226,14 +228,14 @@ hash = sha256( text + "\0" + character + "\0" + lora_adapter + "\0" + tts_params
 irodori-tts-batch <command> [options]
 
 commands:
-  validate  CSV と config を検証（生成しない）。件数・キャラ別内訳を表示。
+  validate  CSV と config を検証（生成しない）。キャラ別セリフ件数を表示。
   build     差分ビルド: 必要な行のみ生成 → 配置 → state 更新。
   clean     出力音声 / キャッシュ / state を削除。
 
 common options:
   -c, --config PATH   設定ファイル（既定: ./config.yaml）
   --csv PATH          入力 CSV（既定: config.project.csv_file）
-  --chars a,b         対象キャラを一時的に限定
+  --chars a,b         対象キャラ（参照番号）を一時的に限定
   --dry-run           生成せず「生成/スキップ予定」の一覧だけ表示
   --force             キャッシュ・state を無視して全生成
   -v, --verbose       詳細ログ
@@ -243,30 +245,31 @@ common options:
 
 ```
 $ irodori-tts-batch validate            # CSV/configの妥当性と件数を確認
-$ irodori-tts-batch build --dry-run     # 生成対象行のプレビュー
+$ irodori-tts-batch build --dry-run     # 生成対象のプレビュー
 $ irodori-tts-batch build               # 音声生成
 # ... CSV を修正 ...
-$ irodori-tts-batch build               # 変わった行だけ再生成
+$ irodori-tts-batch build               # 変わったセリフだけ再生成
 ```
 
 ---
 
 ## 9. エラーハンドリング方針
 
-- 検証エラー（未定義 character / 重複 filename / LoRA 不在）は **生成前に一括報告して中断**。
-- 生成中に個別行が失敗した場合は、その行を記録してスキップし、末尾で失敗一覧を表示
-  （`--fail-fast` で即中断も選べるようにする）。
+- 検証エラー（重複参照番号 / 未定義参照 / LoRA 不在 / 出力名重複）は **生成前に一括報告して中断**。
+- 生成中に個別行が失敗した場合は記録してスキップし、末尾で失敗一覧を表示
+  （`--fail-fast` で即中断も選べる）。
 - 途中中断しても、成功済みの行は state に記録され、再実行時にスキップされる。
 
 ---
 
 ## 10. 将来拡張
 
-- **A. CSV 自動生成**: TyranoScript `.ks` から `filename, character, text` を抽出する
-  補助コマンド（旧連携案の名前欄 `#name` パーサを流用）。
-- **B. tyrano 組み込み**: 生成結果を `voconfig` / `vostart` で `.ks` へ書き戻す後段。
-- **C. 感情・スタイル**: `caption` 列の追加と VoiceDesign チェックポイント対応。
-- **D. LoRA 未整備時のフォールバック**: 参照音声（`--ref-wav`）のみでの生成。
+- **A. 定義とセリフの 2 ファイル分割**: 1 ファイル 2 セクションが編集しづらい場合、
+  `characters.csv` / `scenario.csv` に分割する構成へ切替。
+- **B. tyrano 組み込み**: 生成結果を `voconfig` / `vostart` で `.ks` へ書き戻す後段
+  （連番のゼロ埋めなし命名は既にこれに適合済み）。
+- **C. CSV 自動生成**: `.ks` から定義・セリフを抽出する補助コマンド。
+- **D. 顔文字の自動付与 / VoiceDesign caption 対応**。
 - **E. 生成バックエンド抽象化**: `infer.py` 直叩き / Irodori-TTS-Server（OpenAI 互換 API）の切替。
 
 ---

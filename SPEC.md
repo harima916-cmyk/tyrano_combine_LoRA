@@ -199,6 +199,9 @@ on_empty_text: "skip"  # skip | error
   - `no-ref`（既定）→ `--no-ref`（LoRA が声を担う）
   - `ref-wav` / `ref-embed` / `ref-latent` → `--{mode} {irodori.ref_path}`
   - `none` → 付与しない（`extra_args` で自前指定）
+- **デバイス / 精度**: `irodori.device` を指定すると `--model-device {device} --codec-device {device}`、
+  `irodori.precision` で `--model-precision/--codec-precision` を付与する。GPU 明示なら `device: cuda`。
+  未指定（`null`）なら infer.py の既定に任せる。
 - 感情・話し方は `送信テキスト` 内の顔文字（絵文字）で制御する（Irodori-TTS の絵文字スタイル制御）。
 - 生成物は `.wav`。変換はしないため `voice_out_dir/{ヘッド}{連番}.wav` へコピー配置する。
 

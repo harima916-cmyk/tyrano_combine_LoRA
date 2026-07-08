@@ -51,6 +51,10 @@ class InferRunner:
         elif mode in ("ref-wav", "ref-embed", "ref-latent") and ir.ref_path:
             cmd += [f"--{mode}", os.path.abspath(ir.ref_path)]
         # mode == "none" の場合は付けない（extra_args で自前指定する想定）
+        if ir.device:
+            cmd += ["--model-device", ir.device, "--codec-device", ir.device]
+        if ir.precision:
+            cmd += ["--model-precision", ir.precision, "--codec-precision", ir.precision]
         if ir.num_steps is not None:
             cmd += ["--num-steps", str(ir.num_steps)]
         if ir.seconds is not None:

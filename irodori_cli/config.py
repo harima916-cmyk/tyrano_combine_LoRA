@@ -20,6 +20,9 @@ class IrodoriConfig:
     #   no-ref | ref-wav | ref-embed | ref-latent | none
     ref_mode: str = "no-ref"
     ref_path: str | None = None  # ref-wav/embed/latent のとき渡すファイル
+    # 実行デバイス / 精度。None なら infer.py の既定に任せる。
+    device: str | None = None      # "cuda" | "cpu" | "cuda:0" 等
+    precision: str | None = None   # "bf16" | "fp32"
     extra_args: list[str] = field(default_factory=list)
 
 
@@ -73,6 +76,8 @@ def load_config(path: str) -> Config:
             seconds=ir.get("seconds", None),
             ref_mode=ir.get("ref_mode", "no-ref"),
             ref_path=ir.get("ref_path", None),
+            device=ir.get("device", None),
+            precision=ir.get("precision", None),
             extra_args=list(extra),
         ),
     )

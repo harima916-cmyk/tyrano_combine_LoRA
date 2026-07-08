@@ -29,6 +29,9 @@ irodori:
   #   none      : 何も付けない（extra_args で自前指定）
   ref_mode:   "no-ref"
   ref_path:   null
+  # 実行デバイス / 精度（null なら infer.py の既定に任せる）。GPU 明示なら "cuda"。
+  device:     null      # "cuda" | "cpu" | "cuda:0"
+  precision:  null      # "bf16" | "fp32"
   extra_args: []
 
 on_empty_text: "skip" # skip | error

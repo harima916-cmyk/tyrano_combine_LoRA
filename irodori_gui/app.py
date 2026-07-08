@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 
 from irodori_csv import ParseError, Scenario, read_scenario, validate_scenario, write_scenario
 
-from .delegates import CharacterComboDelegate, CursorTrackingLineEditDelegate, LoraFolderDelegate
+from .delegates import CharacterComboDelegate, LoraFolderDelegate, SendTextDelegate
 from .emoji import load_emoji_palette
 from .models import CharacterTableModel, LineTableModel
 
@@ -47,9 +47,7 @@ class MainWindow(QMainWindow):
         self._proc: QProcess | None = None
         self._player = None
         self._audio_out = None
-        # 最後に送信テキストのカーソルがあった位置（絵文字挿入先）
-        self._send_cursor_row: int | None = None
-        self._send_cursor_pos: int | None = None
+        self._active_send_editor = None  # 編集中の送信テキスト QLineEdit
 
         self.char_model = CharacterTableModel()
         self.line_model = LineTableModel(self.char_model)
@@ -109,8 +107,7 @@ class MainWindow(QMainWindow):
             LineTableModel.COL_CHAR, CharacterComboDelegate(self.char_model, self.line_view)
         )
         self.line_view.setItemDelegateForColumn(
-            LineTableModel.COL_SEND,
-            CursorTrackingLineEditDelegate(self._remember_send_cursor, self.line_view),
+            LineTableModel.COL_SEND, SendTextDelegate(self._set_send_editor, self.line_view)
         )
         self.line_view.setSelectionBehavior(QAbstractItemView.SelectRows)
         # 長文を省略せず全文表示: 折り返し＋行高さ自動調整
@@ -135,7 +132,7 @@ class MainWindow(QMainWindow):
         root.addWidget(line_box)
 
         # 絵文字パレット
-        emoji_box = QGroupBox("絵文字パレット（送信テキストのカーソル位置へ挿入）")
+        emoji_box = QGroupBox("絵文字パレット（送信テキストを編集中はカーソル位置へ／未編集は末尾へ挿入）")
         eb = QHBoxLayout(emoji_box)
         eb.setSpacing(2)
         wrap = QWidget()
@@ -145,6 +142,8 @@ class MainWindow(QMainWindow):
             btn = QToolButton()
             btn.setText(e.emoji)
             btn.setToolTip(f"{e.meaning_ja}\n{e.meaning_en}")
+            # フォーカスを奪わない → 編集中セルのエディタを閉じずにカーソル位置へ挿入できる
+            btn.setFocusPolicy(Qt.NoFocus)
             btn.clicked.connect(lambda _=False, em=e.emoji: self._insert_emoji(em))
             wrap_layout.addWidget(btn)
         wrap_layout.addStretch()
@@ -222,24 +221,25 @@ class MainWindow(QMainWindow):
         if idx.isValid():
             self.char_model.remove_row(idx.row())
 
-    def _remember_send_cursor(self, row: int, pos: int):
-        self._send_cursor_row = row
-        self._send_cursor_pos = pos
+    def _set_send_editor(self, editor):
+        self._active_send_editor = editor
 
     def _insert_emoji(self, emoji: str):
+        # 送信テキストを編集中なら、その生きたカーソル位置へ挿入（エディタは閉じない）
+        ed = self._active_send_editor
+        if ed is not None:
+            ed.deselect()      # 全選択状態でも上書きしない
+            ed.insert(emoji)   # カーソル位置へ挿入（連続挿入も追従）
+            return
+        # 未編集なら選択行の送信テキスト末尾へ追加（切り離し扱い）
         row = self._line_row()
         if row < 0:
-            QMessageBox.information(self, "絵文字挿入", "挿入先のセリフ行を選択してください。")
+            QMessageBox.information(
+                self, "絵文字挿入",
+                "セルをダブルクリックして編集し、入れたい位置にカーソルを置いてから押してください。",
+            )
             return
-        # 編集中セルはボタン押下で確定→モデルに反映済み。覚えたカーソル位置へ挿入
-        pos = self._send_cursor_pos if self._send_cursor_row == row else None
-        self.line_model.insert_emoji(row, emoji, pos)
-        # 連続挿入できるよう、挿入後の位置を追従させる
-        self._send_cursor_row = row
-        if pos is None:
-            self._send_cursor_pos = len(self.line_model.rows[row].send_text)
-        else:
-            self._send_cursor_pos = pos + len(emoji)
+        self.line_model.insert_emoji(row, emoji)
 
     def _on_changed(self):
         self.dirty = True

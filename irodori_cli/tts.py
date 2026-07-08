@@ -44,6 +44,13 @@ class InferRunner:
             "--lora-adapter", os.path.abspath(lora_dir) if lora_dir else lora_dir,
             "--output-wav", os.path.abspath(out_wav),
         ]
+        # 話者の与え方（話者条件付き checkpoint は必須。LoRA 運用は通常 --no-ref）
+        mode = (ir.ref_mode or "none").strip()
+        if mode == "no-ref":
+            cmd += ["--no-ref"]
+        elif mode in ("ref-wav", "ref-embed", "ref-latent") and ir.ref_path:
+            cmd += [f"--{mode}", os.path.abspath(ir.ref_path)]
+        # mode == "none" の場合は付けない（extra_args で自前指定する想定）
         if ir.num_steps is not None:
             cmd += ["--num-steps", str(ir.num_steps)]
         if ir.seconds is not None:

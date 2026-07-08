@@ -22,6 +22,13 @@ irodori:
   checkpoint: "Aratako/Irodori-TTS-500M-v3"
   num_steps:  32
   seconds:    null
+  # 話者の与え方（話者条件付き checkpoint では必須）。LoRA で声を作る場合は "no-ref"。
+  #   no-ref    : 参照音声なし（LoRA が声を担う）※LoRA 運用の既定
+  #   ref-wav   : ref_path に参照音声(.wav)を指定
+  #   ref-embed : ref_path に学習済みスピーカー埋め込みを指定
+  #   none      : 何も付けない（extra_args で自前指定）
+  ref_mode:   "no-ref"
+  ref_path:   null
   extra_args: []
 
 on_empty_text: "skip" # skip | error

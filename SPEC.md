@@ -188,10 +188,17 @@ on_empty_text: "skip"  # skip | error
   --hf-checkpoint {checkpoint} \
   --text "{送信テキスト}" \
   --lora-adapter {定義[参照番号].LoRAフォルダ} \
+  {話者フラグ}                          # 既定 --no-ref（§下記）
   [--num-steps {num_steps}] [--seconds {seconds}] {extra_args} \
   --output-wav {cache_dir}/{hash}.wav
 ```
 
+- **作業ディレクトリは `repo_dir`**（Irodori-TTS リポジトリ）で実行する。infer.py・LoRA・
+  出力先は絶対パスで渡す（`uv`/相対 import が正しい環境を使うため）。
+- **話者フラグ**（話者条件付き checkpoint は必須）は `irodori.ref_mode` で決める:
+  - `no-ref`（既定）→ `--no-ref`（LoRA が声を担う）
+  - `ref-wav` / `ref-embed` / `ref-latent` → `--{mode} {irodori.ref_path}`
+  - `none` → 付与しない（`extra_args` で自前指定）
 - 感情・話し方は `送信テキスト` 内の顔文字（絵文字）で制御する（Irodori-TTS の絵文字スタイル制御）。
 - 生成物は `.wav`。変換はしないため `voice_out_dir/{ヘッド}{連番}.wav` へコピー配置する。
 

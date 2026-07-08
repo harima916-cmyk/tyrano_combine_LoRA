@@ -16,6 +16,10 @@ class IrodoriConfig:
     checkpoint: str = "Aratako/Irodori-TTS-500M-v3"
     num_steps: int | None = 32
     seconds: float | None = None
+    # 話者の与え方（話者条件付き checkpoint は必須）。LoRA 運用は通常 "no-ref"。
+    #   no-ref | ref-wav | ref-embed | ref-latent | none
+    ref_mode: str = "no-ref"
+    ref_path: str | None = None  # ref-wav/embed/latent のとき渡すファイル
     extra_args: list[str] = field(default_factory=list)
 
 
@@ -67,6 +71,8 @@ def load_config(path: str) -> Config:
             checkpoint=ir.get("checkpoint", "Aratako/Irodori-TTS-500M-v3"),
             num_steps=ir.get("num_steps", 32),
             seconds=ir.get("seconds", None),
+            ref_mode=ir.get("ref_mode", "no-ref"),
+            ref_path=ir.get("ref_path", None),
             extra_args=list(extra),
         ),
     )

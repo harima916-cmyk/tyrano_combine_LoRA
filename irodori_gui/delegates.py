@@ -10,20 +10,36 @@ from .models import CharacterTableModel
 
 
 class SendTextDelegate(QStyledItemDelegate):
-    """送信テキスト列: 開いている QLineEdit エディタを親へ通知する。
+    """送信テキスト列: 編集中エディタとカーソル位置を親へ通知する。
 
-    絵文字パレットが「編集中セルのカーソル位置」へ直接挿入できるよう、
-    編集中のエディタ参照を渡す（編集終了時は None）。
+    絵文字パレットが「編集中セルのカーソル位置」へ挿入できるよう:
+    - `on_editor(editor|None)`: 編集開始で QLineEdit を、終了で None を通知（ライブ挿入用）
+    - `on_cursor(row, pos)`  : カーソル移動を通知（エディタが閉じても位置を復元できる保険）
     """
 
-    def __init__(self, on_editor: Callable, parent=None):
+    def __init__(self, on_editor: Callable, on_cursor: Callable, parent=None):
         super().__init__(parent)
         self._on_editor = on_editor
+        self._on_cursor = on_cursor
 
     def createEditor(self, parent, option, index):
         editor = super().createEditor(parent, option, index)  # 既定は QLineEdit
         self._on_editor(editor)
+        row = index.row()
+        try:
+            editor.cursorPositionChanged.connect(
+                lambda _old, new, r=row: self._on_cursor(r, new)
+            )
+        except AttributeError:
+            pass
         return editor
+
+    def setModelData(self, editor, model, index):
+        super().setModelData(editor, model, index)
+        try:
+            self._on_cursor(index.row(), editor.cursorPosition())
+        except AttributeError:
+            pass
 
     def destroyEditor(self, editor, index):
         self._on_editor(None)

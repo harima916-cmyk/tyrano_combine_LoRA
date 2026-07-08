@@ -47,7 +47,9 @@ class MainWindow(QMainWindow):
         self._proc: QProcess | None = None
         self._player = None
         self._audio_out = None
-        self._active_send_editor = None  # 編集中の送信テキスト QLineEdit
+        self._active_send_editor = None       # 編集中の送信テキスト QLineEdit（ライブ挿入用）
+        self._send_cursor_row: int | None = None   # 最後にカーソルがあった行
+        self._send_cursor_pos: int | None = None   # 最後にカーソルがあった位置（保険）
 
         self.char_model = CharacterTableModel()
         self.line_model = LineTableModel(self.char_model)
@@ -107,7 +109,8 @@ class MainWindow(QMainWindow):
             LineTableModel.COL_CHAR, CharacterComboDelegate(self.char_model, self.line_view)
         )
         self.line_view.setItemDelegateForColumn(
-            LineTableModel.COL_SEND, SendTextDelegate(self._set_send_editor, self.line_view)
+            LineTableModel.COL_SEND,
+            SendTextDelegate(self._set_send_editor, self._remember_send_cursor, self.line_view),
         )
         self.line_view.setSelectionBehavior(QAbstractItemView.SelectRows)
         # 長文を省略せず全文表示: 折り返し＋行高さ自動調整
@@ -133,9 +136,11 @@ class MainWindow(QMainWindow):
 
         # 絵文字パレット
         emoji_box = QGroupBox("絵文字パレット（送信テキストを編集中はカーソル位置へ／未編集は末尾へ挿入）")
+        emoji_box.setFocusPolicy(Qt.NoFocus)
         eb = QHBoxLayout(emoji_box)
         eb.setSpacing(2)
         wrap = QWidget()
+        wrap.setFocusPolicy(Qt.NoFocus)  # ラッパーもフォーカスを奪わない
         wrap_layout = QHBoxLayout(wrap)
         wrap_layout.setContentsMargins(0, 0, 0, 0)
         for e in load_emoji_palette():
@@ -150,6 +155,9 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QScrollArea
 
         scroll = QScrollArea()
+        # スクロールエリアと viewport もフォーカスを奪わない（編集中エディタを閉じさせない）
+        scroll.setFocusPolicy(Qt.NoFocus)
+        scroll.viewport().setFocusPolicy(Qt.NoFocus)
         scroll.setWidgetResizable(True)
         scroll.setWidget(wrap)
         scroll.setFixedHeight(56)
@@ -224,14 +232,20 @@ class MainWindow(QMainWindow):
     def _set_send_editor(self, editor):
         self._active_send_editor = editor
 
+    def _remember_send_cursor(self, row: int, pos: int):
+        self._send_cursor_row = row
+        self._send_cursor_pos = pos
+
     def _insert_emoji(self, emoji: str):
-        # 送信テキストを編集中なら、その生きたカーソル位置へ挿入（エディタは閉じない）
+        # (1) 送信テキストを編集中なら、その生きたカーソル位置へ挿入（エディタは閉じない）
         ed = self._active_send_editor
         if ed is not None:
             ed.deselect()      # 全選択状態でも上書きしない
             ed.insert(emoji)   # カーソル位置へ挿入（連続挿入も追従）
+            # ライブ挿入後の位置を保険として記録
+            self._remember_send_cursor(self._line_row(), ed.cursorPosition())
             return
-        # 未編集なら選択行の送信テキスト末尾へ追加（切り離し扱い）
+        # (2) 未編集/エディタが閉じた場合: 記録済みカーソル位置へモデル層で挿入（保険）
         row = self._line_row()
         if row < 0:
             QMessageBox.information(
@@ -239,7 +253,13 @@ class MainWindow(QMainWindow):
                 "セルをダブルクリックして編集し、入れたい位置にカーソルを置いてから押してください。",
             )
             return
-        self.line_model.insert_emoji(row, emoji)
+        pos = self._send_cursor_pos if self._send_cursor_row == row else None
+        self.line_model.insert_emoji(row, emoji, pos)
+        # 連続挿入できるよう位置を追従
+        self._send_cursor_row = row
+        self._send_cursor_pos = (
+            len(self.line_model.rows[row].send_text) if pos is None else pos + len(emoji)
+        )
 
     def _on_changed(self):
         self.dirty = True

@@ -230,6 +230,7 @@ irodori-tts-batch <command> [options]
 commands:
   validate  CSV と config を検証（生成しない）。キャラ別セリフ件数を表示。
   build     差分ビルド: 必要な行のみ生成 → 配置 → state 更新。
+  preview   1 行だけをお試し生成（CSV/state を介さず、指定テキストで即生成）。GUI 試聴用。
   clean     出力音声 / キャッシュ / state を削除。
 
 common options:
@@ -240,7 +241,45 @@ common options:
   --force             キャッシュ・state を無視して全生成
   --progress          機械可読な進捗を1行1イベントで出力（GUI 連携用）
   -v, --verbose       詳細ログ
+
+build options:
+  --out-dir PATH      音声の出力先を上書き（既定: config.project.voice_out_dir）
+  --copy-csv          出力先フォルダへ入力 CSV を scenario.csv としてコピー（バンドル出力）
+
+preview options:
+  --text STR          送信テキスト（顔文字付き）
+  --lora-dir PATH     LoRA アダプタのフォルダ
+  --out PATH          出力 wav パス（既定: 一時ファイル。パスを stdout に出力）
 ```
+
+### `build --out-dir` / `--copy-csv`（フォルダ出力・バンドル）
+
+GUI の「一括生成（フォルダ出力）」（`GUI_SPEC.md` §5.5）から利用する。
+指定フォルダに音声を書き出し、`--copy-csv` で元 CSV を同梱して**再現可能なバンドル**にする。
+
+```
+<出力先フォルダ>/
+  scenario.csv        # 生成に使った CSV のコピー（--copy-csv 時）
+  akane_1.wav
+  akane_2.wav
+  yui_1.wav
+  ...
+```
+
+- 新しい空フォルダへ出力してもキャッシュ（内容ハッシュ）が効くため、未変更分は
+  infer.py を再実行せず cache からコピーするだけで済む。
+
+### `preview`（お試し生成）
+
+CSV や state を介さず、渡されたテキストと LoRA で 1 件だけ生成する。GUI が選択行の
+`送信テキスト` と解決済み LoRA パスを渡し、返ってきた wav を再生して試聴する。
+
+```
+irodori-tts-batch preview --text "こんにちは。😊" --lora-dir C:\lora\akane --out tmp/preview.wav
+# → 生成した wav のパスを stdout に出力
+```
+
+- キャッシュは共有する（同一 hash があれば再利用）。state は更新しない。
 
 ### 進捗出力プロトコル（`--progress`、GUI 連携用）
 

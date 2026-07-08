@@ -23,6 +23,7 @@ class IrodoriConfig:
 class Config:
     csv_file: str = "scenario.csv"
     voice_out_dir: str = "voices"
+    preview_dir: str = "preview"
     cache_dir: str = ".irodori_cache"
     state_file: str = ".irodori_state.json"
     csv_encoding: str = "utf-8-sig"
@@ -55,6 +56,7 @@ def load_config(path: str) -> Config:
     return Config(
         csv_file=project.get("csv_file", "scenario.csv"),
         voice_out_dir=project.get("voice_out_dir", "voices"),
+        preview_dir=project.get("preview_dir", "preview"),
         cache_dir=project.get("cache_dir", ".irodori_cache"),
         state_file=project.get("state_file", ".irodori_state.json"),
         csv_encoding=csv_sec.get("encoding", "utf-8-sig"),

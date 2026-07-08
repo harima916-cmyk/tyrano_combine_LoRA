@@ -157,6 +157,7 @@ CSV は 1 ファイル内に **2 つのセクション** を持つ。セクシ�
 project:
   csv_file:      "scenario.csv"         # 既定の入力 CSV（--csv で上書き可）
   voice_out_dir: "voices"               # 音声(.wav)の出力先
+  preview_dir:   "preview"              # お試し生成の保存先（見えるフォルダ）
   cache_dir:     ".irodori_cache"       # TTS キャッシュ
   state_file:    ".irodori_state.json"  # 差分判定の状態
 
@@ -256,7 +257,7 @@ build options:
 preview options:
   --text STR          送信テキスト（顔文字付き）
   --lora-dir PATH     LoRA アダプタのフォルダ
-  --out PATH          出力 wav パス（既定: 一時ファイル。パスを stdout に出力）
+  --out PATH          出力 wav パス（既定: project.preview_dir 内。パスを stdout に出力）
 ```
 
 ### `build --out-dir` / `--copy-csv`（フォルダ出力・バンドル）

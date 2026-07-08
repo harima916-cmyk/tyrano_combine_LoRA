@@ -5,6 +5,7 @@
 project:
   csv_file:      "scenario.csv"         # 既定の入力 CSV（--csv で上書き可）
   voice_out_dir: "voices"               # 音声(.wav)の出力先
+  preview_dir:   "preview"              # お試し生成の保存先（見えるフォルダ）
   cache_dir:     ".irodori_cache"       # TTS キャッシュ
   state_file:    ".irodori_state.json"  # 差分判定の状態
 

@@ -6,7 +6,6 @@ import argparse
 import os
 import shutil
 import sys
-import tempfile
 
 from irodori_csv import ParseError, read_scenario, validate_scenario
 
@@ -121,7 +120,8 @@ def cmd_build(args) -> int:
 
 def cmd_preview(args) -> int:
     cfg = _load(args)
-    out = args.out or os.path.join(tempfile.gettempdir(), "irodori_preview", "preview.wav")
+    # 既定はプロジェクト内の見える preview/ フォルダ（隠しフォルダを避ける）
+    out = args.out or os.path.join(cfg.preview_dir, "preview.wav")
     builder = Builder(cfg, InferRunner(cfg))
     try:
         path = builder.preview(args.text, args.lora_dir, out)

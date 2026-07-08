@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import sys
-import tempfile
 
 from PySide6.QtCore import QProcess, Qt
 from PySide6.QtGui import QAction
@@ -282,6 +281,14 @@ class MainWindow(QMainWindow):
     def _python(self) -> str:
         return sys.executable or "python3"
 
+    def _project_dir(self) -> str:
+        """プロジェクトの基準フォルダ（config.yaml のある場所 → CSV の場所 → cwd）。"""
+        if self.config_path and os.path.exists(self.config_path):
+            return os.path.dirname(os.path.abspath(self.config_path))
+        if self.current_path:
+            return os.path.dirname(os.path.abspath(self.current_path))
+        return os.getcwd()
+
     def _config_args(self) -> list[str]:
         return ["--config", self.config_path] if self.config_path else []
 
@@ -319,7 +326,8 @@ class MainWindow(QMainWindow):
         if char is None:
             QMessageBox.warning(self, "お試し生成", "このセリフのキャラが未定義です。")
             return
-        out = os.path.join(tempfile.gettempdir(), "irodori_preview", f"row{row}.wav")
+        # 隠し temp ではなく、プロジェクト内の見える preview/ フォルダへ保存
+        out = os.path.join(self._project_dir(), "preview", f"row{row + 1}.wav")
         args = [
             "-m", "irodori_cli", *self._config_args(),
             "preview", "--text", line.tts_text(), "--lora-dir", char.lora_dir, "--out", out,

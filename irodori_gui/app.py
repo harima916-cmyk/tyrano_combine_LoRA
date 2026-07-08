@@ -152,11 +152,44 @@ class MainWindow(QMainWindow):
         # 進捗 / ログ
         self.progress = QProgressBar()
         root.addWidget(self.progress)
+        log_head = QHBoxLayout()
+        log_head.addWidget(QLabel("生成ログ"))
+        log_head.addStretch()
+        log_head.addWidget(QPushButton("ログをコピー", clicked=self._copy_log))
+        log_head.addWidget(QPushButton("ログを保存…", clicked=self._save_log))
+        log_head.addWidget(QPushButton("クリア", clicked=lambda: self.log.clear()))
+        root.addLayout(log_head)
         self.log = QListWidget()
         self.log.setFixedHeight(90)
+        self.log.setSelectionMode(QListWidget.ExtendedSelection)
         root.addWidget(self.log)
 
         self.setCentralWidget(central)
+
+    # ------------------------------------------------------------- log utils
+    def _log_text(self) -> str:
+        return "\n".join(self.log.item(i).text() for i in range(self.log.count()))
+
+    def _copy_log(self):
+        from PySide6.QtWidgets import QApplication
+
+        QApplication.clipboard().setText(self._log_text())
+        self.statusBar().showMessage("ログをクリップボードにコピーしました。", 3000)
+
+    def _save_log(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "ログを保存", os.path.join(self._project_dir(), "irodori_log.txt"),
+            "テキスト (*.txt)",
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self._log_text() + "\n")
+        except OSError as e:
+            QMessageBox.critical(self, "保存エラー", str(e))
+            return
+        self.statusBar().showMessage(f"ログを保存しました: {path}", 5000)
 
     # ------------------------------------------------------------- helpers
     def _line_row(self) -> int:

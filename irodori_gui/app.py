@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QListWidget,
     QMainWindow,
@@ -85,6 +86,9 @@ class MainWindow(QMainWindow):
         self.char_view = QTableView()
         self.char_view.setModel(self.char_model)
         self.char_view.setItemDelegateForColumn(2, LoraFolderDelegate(self.char_view))
+        self.char_view.setWordWrap(True)
+        self.char_view.setTextElideMode(Qt.ElideNone)
+        self.char_view.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.char_view.horizontalHeader().setStretchLastSection(True)
         cb.addWidget(self.char_view)
         crow = QHBoxLayout()
@@ -106,9 +110,14 @@ class MainWindow(QMainWindow):
             LineTableModel.COL_SEND, SendTextDelegate(self._set_send_editor, self.line_view)
         )
         self.line_view.setSelectionBehavior(QAbstractItemView.SelectRows)
+        # 長文を省略せず全文表示: 折り返し＋行高さ自動調整
+        self.line_view.setWordWrap(True)
+        self.line_view.setTextElideMode(Qt.ElideNone)
+        self.line_view.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.line_view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.line_view.horizontalHeader().setStretchLastSection(True)
-        self.line_view.setColumnWidth(LineTableModel.COL_TEXT, 240)
-        self.line_view.setColumnWidth(LineTableModel.COL_SEND, 260)
+        self.line_view.setColumnWidth(LineTableModel.COL_TEXT, 300)
+        self.line_view.setColumnWidth(LineTableModel.COL_SEND, 320)
         lb.addWidget(self.line_view)
         lrow = QHBoxLayout()
         lrow.addWidget(QPushButton("＋ 行追加", clicked=self.line_model.add_row))
@@ -304,6 +313,8 @@ class MainWindow(QMainWindow):
         self.dirty = False
         self._update_title()
         self._revalidate()
+        self.line_view.resizeRowsToContents()
+        self.char_view.resizeRowsToContents()
 
     def _save_file(self) -> bool:
         if self.current_path is None:

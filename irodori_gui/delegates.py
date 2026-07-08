@@ -2,9 +2,32 @@
 
 from __future__ import annotations
 
+from typing import Callable
+
 from PySide6.QtWidgets import QComboBox, QFileDialog, QStyledItemDelegate
 
 from .models import CharacterTableModel
+
+
+class SendTextDelegate(QStyledItemDelegate):
+    """送信テキスト列: 開いている QLineEdit エディタを通知する。
+
+    絵文字パレットがカーソル位置へ挿入できるよう、編集中のエディタ参照を
+    ウィンドウへ渡す（編集終了時は None を通知）。
+    """
+
+    def __init__(self, on_editor: Callable, parent=None):
+        super().__init__(parent)
+        self._on_editor = on_editor
+
+    def createEditor(self, parent, option, index):
+        editor = super().createEditor(parent, option, index)  # 既定は QLineEdit
+        self._on_editor(editor)
+        return editor
+
+    def destroyEditor(self, editor, index):
+        self._on_editor(None)
+        super().destroyEditor(editor, index)
 
 
 class CharacterComboDelegate(QStyledItemDelegate):

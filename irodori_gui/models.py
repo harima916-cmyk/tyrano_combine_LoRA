@@ -262,7 +262,8 @@ class LineTableModel(QAbstractTableModel):
             pos = max(0, min(pos, len(text)))
             self.rows[row].send_text = text[:pos] + emoji + text[pos:]
             self.linked[row] = False
-            self._emit_row(row)
+            # 他セル(原文など)を編集中でも巻き込まないよう、変更列(送信/リンク)だけ通知する
+            self.dataChanged.emit(self.index(row, self.COL_SEND), self.index(row, self.COL_LINK))
             self.changed.emit()
 
     def lines(self) -> list[Line]:

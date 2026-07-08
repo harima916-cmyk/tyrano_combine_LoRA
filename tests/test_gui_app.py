@@ -15,6 +15,8 @@ try:
     from PySide6.QtWidgets import QApplication
 
     _APP = QApplication.instance() or QApplication([])
+    from PySide6.QtWidgets import QLineEdit  # noqa: E402
+
     from irodori_csv import Character, Line  # noqa: E402
     from irodori_gui.app import MainWindow  # noqa: E402
     from irodori_gui.models import LineTableModel as L  # noqa: E402
@@ -57,6 +59,24 @@ class TestEmojiInsertApp(unittest.TestCase):
         w._send_cursor_pos = None
         w._insert_emoji("😊")
         self.assertEqual(w.line_model.rows[0].send_text, "おはよう😊")
+
+    def test_emoji_while_editing_text_does_not_lose_text(self):
+        """原文編集中（未確定）に絵文字を押しても原文が消えず、送信テキストへ反映される。"""
+        w = self._win()
+        tidx = w.line_model.index(0, L.COL_TEXT)
+        w.line_view.setCurrentIndex(tidx)
+        w.line_view.edit(tidx)
+        _APP.processEvents()
+        eds = w.line_view.viewport().findChildren(QLineEdit)
+        self.assertTrue(eds, "原文エディタが開いていること")
+        ted = eds[0]
+        ted.setText("こんにちは")   # 未確定の入力
+        ted.setFocus()
+        _APP.processEvents()
+        w._insert_emoji("😊")
+        _APP.processEvents()
+        self.assertEqual(w.line_model.rows[0].text, "こんにちは")        # 消えない
+        self.assertEqual(w.line_model.rows[0].send_text, "こんにちは😊")  # 反映＋絵文字
 
     def test_fallback_into_cell_with_existing_emoji(self):
         """既に絵文字がある行でも、コードポイント index で正しい位置に挿入（Finding 1）。"""

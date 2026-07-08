@@ -10,6 +10,26 @@ from .models import CharacterTableModel
 from .textutil import qt_cursor_to_index
 
 
+class EditorTrackingDelegate(QStyledItemDelegate):
+    """既定の編集動作のまま、開いている QLineEdit エディタ参照を親へ通知する。
+
+    原文(テキスト)列に付け、絵文字クリック時に未確定入力を確定して消失を防ぐために使う。
+    """
+
+    def __init__(self, on_editor: Callable, parent=None):
+        super().__init__(parent)
+        self._on_editor = on_editor
+
+    def createEditor(self, parent, option, index):
+        editor = super().createEditor(parent, option, index)
+        self._on_editor(editor)
+        return editor
+
+    def destroyEditor(self, editor, index):
+        self._on_editor(None)
+        super().destroyEditor(editor, index)
+
+
 class SendTextDelegate(QStyledItemDelegate):
     """送信テキスト列: 編集中エディタとカーソル位置を親へ通知する。
 

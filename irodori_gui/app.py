@@ -28,7 +28,12 @@ from PySide6.QtWidgets import (
 
 from irodori_csv import ParseError, Scenario, read_scenario, validate_scenario, write_scenario
 
-from .delegates import CharacterComboDelegate, LoraFolderDelegate, SendTextDelegate
+from .delegates import (
+    CharacterComboDelegate,
+    EditorTrackingDelegate,
+    LoraFolderDelegate,
+    SendTextDelegate,
+)
 from .emoji import load_emoji_palette
 from .models import CharacterTableModel, LineTableModel
 from .textutil import qt_cursor_to_index
@@ -49,6 +54,7 @@ class MainWindow(QMainWindow):
         self._player = None
         self._audio_out = None
         self._active_send_editor = None       # 編集中の送信テキスト QLineEdit（ライブ挿入用）
+        self._active_text_editor = None       # 編集中の原文 QLineEdit（消失防止の確定用）
         self._send_edit_row: int | None = None     # 編集中の行（エディタの行）
         self._send_cursor_row: int | None = None   # 最後にカーソルがあった行
         self._send_cursor_pos: int | None = None   # 最後にカーソルがあった位置（コードポイント index）
@@ -113,6 +119,10 @@ class MainWindow(QMainWindow):
         self.line_view.setItemDelegateForColumn(
             LineTableModel.COL_SEND,
             SendTextDelegate(self._set_send_editor, self._remember_send_cursor, self.line_view),
+        )
+        self.line_view.setItemDelegateForColumn(
+            LineTableModel.COL_TEXT,
+            EditorTrackingDelegate(self._set_text_editor, self.line_view),
         )
         self.line_view.setSelectionBehavior(QAbstractItemView.SelectRows)
         # 長文を省略せず全文表示: 折り返し＋行高さ自動調整
@@ -241,6 +251,28 @@ class MainWindow(QMainWindow):
         self._send_cursor_row = row
         self._send_cursor_pos = pos
 
+    def _set_text_editor(self, editor):
+        self._active_text_editor = editor
+
+    def _commit_open_cell_editor(self) -> bool:
+        """原文セルを編集中なら、その内容を確定して閉じる。
+
+        絵文字クリックで未確定の入力が消える事故を防ぐ。確定により原文→送信テキストの
+        反映（リンク中なら）も先に行われる。確定した場合 True。
+        """
+        ed = self._active_text_editor
+        if ed is None:
+            return False
+        from PySide6.QtWidgets import QAbstractItemDelegate
+
+        try:
+            self.line_view.commitData(ed)
+            self.line_view.closeEditor(ed, QAbstractItemDelegate.NoHint)
+            return True
+        except (RuntimeError, TypeError):
+            self._active_text_editor = None
+            return False
+
     def _insert_emoji(self, emoji: str):
         # (1) 送信テキストを編集中なら、その生きたカーソル位置へ挿入（エディタは閉じない）
         ed = self._active_send_editor
@@ -254,7 +286,12 @@ class MainWindow(QMainWindow):
                 return
             except RuntimeError:
                 self._active_send_editor = None  # 破棄済み C++ オブジェクト → フォールバックへ
-        # (2) 未編集/エディタが閉じた場合: 記録済みカーソル位置へモデル層で挿入（保険）
+        # (2) 原文など別セルを編集中なら、まず確定（消失防止＋送信テキストへ反映）してから追記
+        if self._commit_open_cell_editor():
+            # 反映後の送信テキスト末尾へ追記する（古いカーソル位置は無効化）
+            self._send_cursor_row = None
+            self._send_cursor_pos = None
+        # (3) 記録済みカーソル位置（無ければ末尾）へモデル層で挿入
         row = self._line_row()
         if row < 0:
             QMessageBox.information(
@@ -306,6 +343,7 @@ class MainWindow(QMainWindow):
     def _clear_send_editor_state(self):
         """モデルリセット前に、破棄されうる編集中エディタ参照を無効化する。"""
         self._active_send_editor = None
+        self._active_text_editor = None
         self._send_edit_row = None
         self._send_cursor_row = None
         self._send_cursor_pos = None

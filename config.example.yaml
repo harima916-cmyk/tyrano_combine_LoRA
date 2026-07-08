@@ -7,6 +7,9 @@ project:
   cache_dir:     ".irodori_cache"       # TTS キャッシュ
   state_file:    ".irodori_state.json"  # 差分判定の状態
 
+csv:
+  encoding: "utf-8-sig"  # UTF-8(BOM有無どちらも可)。日本語Excel保存なら cp932 も指定可
+
 irodori:
   repo_dir:   "/path/to/Irodori-TTS"        # infer.py のあるディレクトリ
   runner:     "uv run --no-sync python"     # 実行コマンド前置

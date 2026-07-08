@@ -38,7 +38,16 @@ irodori-tts-batch build            # 音声生成（差分のみ）
 ```
 
 - 設定例: [`config.example.yaml`](./config.example.yaml)
-- CSV 例: [`scenario.example.csv`](./scenario.example.csv)
+- CSV 記入例: [`scenario.example.csv`](./scenario.example.csv)
+- CSV 空テンプレート: [`scenario.template.csv`](./scenario.template.csv)
+
+### CSV テンプレート（確定）
+
+- 必須 3 列 `filename, character, text`（順不同）。それ以外の列（`note` 等）は無視。
+- 文字コードは UTF-8（BOM 有無どちらも可）。日本語 Excel 保存なら config で `cp932` も指定可。
+- `filename` 推奨規約: 拡張子なし＋`キャラ_連番3桁`（例 `akane_001`）。拡張子は config の `format` で自動付与。
+
+詳細は [`SPEC.md`](./SPEC.md) §4。
 
 ## 次のステップ
 

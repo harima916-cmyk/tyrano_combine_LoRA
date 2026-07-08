@@ -65,35 +65,70 @@ scenario.csv ┘      │             （character 未定義 / 重複 filename �
 
 ---
 
-## 4. 入力仕様
+## 4. 入力仕様：シナリオCSV（確定テンプレート）
 
-### 4.1 シナリオCSV
+### 4.1 ファイル形式
 
-- 文字コード **UTF-8**、**ヘッダ行必須**。標準 CSV クォート規則（カンマ・改行はダブルクォートで囲む）。
-- 列（順不同、ヘッダ名で識別）:
+| 項目 | 確定仕様 |
+|---|---|
+| 文字コード | **UTF-8**（BOM 有無どちらも読める）。既定 `utf-8-sig`。`config.csv.encoding` で `cp932`(Shift-JIS) 等に切替可。 |
+| 改行 | LF / CRLF どちらも可。 |
+| 区切り | カンマ `,`。 |
+| クォート | 標準 CSV 規則。カンマ・改行・ダブルクォートを含む値は `"` で囲む（`"` 自身は `""` にエスケープ）。 |
+| ヘッダ行 | **1 行目に必須**。列はヘッダ名で識別（順不同）。 |
+| 空行 | スキップ。 |
+
+### 4.2 列定義
+
+**必須 3 列**（この 3 つが揃っていること。順序は自由）:
 
 | 列 | 必須 | 内容 |
 |---|---|---|
-| `filename` | ✔ | 出力音声のファイル名。拡張子は省略可（省略時は `audio.format` を付与）。 |
+| `filename` | ✔ | 出力音声のファイル名。§4.3 の規約に従う。 |
 | `character` | ✔ | キャラキー。`config.characters` に定義され、LoRA を解決する。 |
-| `text` | ✔ | 音声化するセリフ本文（TTS 入力・ハッシュ対象）。 |
+| `text` | ✔ | 音声化するセリフ本文（TTS 入力・ハッシュ対象）。前後空白はトリム。 |
 
-例（`scenario.example.csv`）:
+**補助列（任意）**: 上記以外の列（例 `note`, `scene`, `caption`）は **無視して許容**する。
+Excel 等でメモ列を自由に追加してよい。`validate` 時に「無視した列名」を情報表示し、
+ヘッダの打ち間違い（例 `charcter`）に気づけるようにする。
+
+### 4.3 filename の規約
+
+- **推奨**: 拡張子なし ＋ `キャラ_連番3桁`（例 `akane_001`, `akane_002`, `yui_001`）。
+  - 連番 3 桁でファイル一覧の並び順が安定する。
+  - 拡張子は付けない（`config.audio.format` から自動付与）。
+- 拡張子を明示してもよい（例 `akane_001.ogg`）。その場合はそれを優先。
+- 制約: **重複禁止**（拡張子正規化後で判定）／ OS 不正文字 `/ \ : * ? " < > |` 禁止。
+
+### 4.4 テンプレート
+
+`scenario.example.csv`（記入例）:
 
 ```csv
 filename,character,text
 akane_001,akane,こんにちは。今日はいい天気ですね。
 akane_002,akane,えっ、それ本当ですか？
 yui_001,yui,おはよう。今日もがんばろうね。
+yui_002,yui,"ふふっ、それはね、ひみつ。"
 ```
 
-### 4.2 検証ルール（`build` / `validate` で実施、違反は中断）
+`scenario.template.csv`（ヘッダだけの空テンプレート）:
 
-- `filename` の **重複禁止**（拡張子正規化後で判定）。
-- `character` が `config.characters` に **存在すること**。
-- `text` が **空でないこと**（空行は警告してスキップ、設定で挙動選択可）。
-- 参照する LoRA アダプタのパスが **存在すること**。
-- `filename` に OS 依存の不正文字（`/ \ : * ? " < > |`）を含まないこと。
+```csv
+filename,character,text
+```
+
+### 4.5 検証ルール（`validate` / `build` で実施）
+
+生成前に全行を検査し、違反があれば **一括報告して中断**する。
+
+- 必須列 `filename` / `character` / `text` がヘッダに揃っていること。
+- `filename` の重複が無いこと（拡張子正規化後）。
+- `filename` に OS 不正文字を含まないこと。
+- `character` が `config.characters` に存在すること。
+- 参照する LoRA アダプタのパスが実在すること。
+- `text` が空でないこと（空は `config.on_empty_text` に従い skip / error）。
+- （情報）必須 3 列以外の無視した列名を一覧表示。
 
 ---
 
@@ -105,6 +140,9 @@ project:
   voice_out_dir: "voices"               # 音声の出力先
   cache_dir:     ".irodori_cache"       # TTS キャッシュ
   state_file:    ".irodori_state.json"  # 差分判定の状態
+
+csv:
+  encoding: "utf-8-sig"  # BOM 有無どちらの UTF-8 も読める。cp932(Shift-JIS)等も可
 
 irodori:
   repo_dir:   "/path/to/Irodori-TTS"        # infer.py のあるディレクトリ

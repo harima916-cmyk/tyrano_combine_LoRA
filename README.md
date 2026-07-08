@@ -7,7 +7,8 @@
 TyranoBuilder（`.ks`）との直接連携は複雑なため、間に CSV を挟んで疎結合にする方針。
 本ツールは **CSV → 音声ファイル生成まで** を担当する（tyrano への組み込みはスコープ外）。
 
-> 現状は **仕様策定フェーズ**。確定仕様は [`SPEC.md`](./SPEC.md) を参照。
+> 現状は **仕様策定フェーズ**。確定仕様は [`SPEC.md`](./SPEC.md)（CSV→音声生成 CLI）と
+> [`GUI_SPEC.md`](./GUI_SPEC.md)（CSV 作成 GUI）を参照。
 
 ## 構図
 
@@ -63,7 +64,17 @@ irodori-tts-batch build            # 音声生成（差分のみ）
 
 詳細は [`SPEC.md`](./SPEC.md) §4。
 
+## 構成（想定）
+
+```
+irodori_csv/   共有: CSV モデル / パーサ / 検証 / 出力名算出
+irodori_cli/   CLI: validate / build / clean（infer.py 実行）
+irodori_gui/   GUI: CSV 作成エディタ（PySide6）
+```
+
+CSV の読み書き・検証は CLI と GUI で共有し、形式のズレを防ぐ。
+
 ## 次のステップ
 
-`SPEC.md` の内容で問題なければ実装に着手する。将来的に `.ks` からの CSV 自動生成や
-tyrano への書き戻しを拡張として追加できる（`SPEC.md` §10）。
+`SPEC.md` / `GUI_SPEC.md` の内容で問題なければ実装に着手する。将来的に `.ks` からの
+CSV 自動生成や tyrano への書き戻しを拡張として追加できる（`SPEC.md` §10）。

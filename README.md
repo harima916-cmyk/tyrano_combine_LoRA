@@ -68,11 +68,18 @@ irodori-tts-batch build            # 音声生成（差分のみ）
 
 ```
 irodori_csv/   共有: CSV モデル / パーサ / 検証 / 出力名算出
-irodori_cli/   CLI: validate / build / clean（infer.py 実行）
-irodori_gui/   GUI: CSV 作成エディタ（PySide6）
+irodori_cli/   CLI: validate / build / clean（infer.py 実行、--progress で進捗出力）
+irodori_gui/   GUI: CSV 作成エディタ（PySide6）＋ build 起動・進捗表示
 ```
 
 CSV の読み書き・検証は CLI と GUI で共有し、形式のズレを防ぐ。
+
+### GUI（`GUI_SPEC.md`）の要点
+
+- **PySide6** 製デスクトップアプリ。キャラ定義とセリフを表で編集し、SPEC §4 準拠 CSV を出力。
+- **原文 → 送信テキストを自動反映**（一方向。送信テキストを手動編集した行は切り離してブロック）。
+- **絵文字パレット**（[`emoji_palette.tsv`](./emoji_palette.tsv) の意味付き 39 種）で送信テキストに感情を挿入。
+- **[▶ 生成]** で CLI `build` を起動し、進捗バー表示。
 
 ## 次のステップ
 

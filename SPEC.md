@@ -238,7 +238,18 @@ common options:
   --chars a,b         対象キャラ（参照番号）を一時的に限定
   --dry-run           生成せず「生成/スキップ予定」の一覧だけ表示
   --force             キャッシュ・state を無視して全生成
+  --progress          機械可読な進捗を1行1イベントで出力（GUI 連携用）
   -v, --verbose       詳細ログ
+```
+
+### 進捗出力プロトコル（`--progress`、GUI 連携用）
+
+`build --progress` は標準出力に 1 行 1 イベントで進捗を出す。GUI（`GUI_SPEC.md` §5.5）が
+これをパースして進捗バーを更新する。
+
+```
+PROGRESS <done>/<total> <出力ファイル名> <GENERATED|SKIPPED|FAILED>
+DONE generated=<M> skipped=<K> failed=<F>
 ```
 
 ### 想定フロー

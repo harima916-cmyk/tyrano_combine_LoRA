@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 
 from irodori_csv import ParseError, Scenario, read_scenario, validate_scenario, write_scenario
 
-from .delegates import CharacterComboDelegate, LoraFolderDelegate
+from .delegates import CharacterComboDelegate, CursorTrackingLineEditDelegate, LoraFolderDelegate
 from .emoji import load_emoji_palette
 from .models import CharacterTableModel, LineTableModel
 
@@ -47,6 +47,8 @@ class MainWindow(QMainWindow):
         self._proc: QProcess | None = None
         self._player = None
         self._audio_out = None
+        self._send_cursor_row: int | None = None
+        self._send_cursor_pos: int | None = None
 
         self.char_model = CharacterTableModel()
         self.line_model = LineTableModel(self.char_model)
@@ -101,6 +103,10 @@ class MainWindow(QMainWindow):
         self.line_view.setModel(self.line_model)
         self.line_view.setItemDelegateForColumn(
             LineTableModel.COL_CHAR, CharacterComboDelegate(self.char_model, self.line_view)
+        )
+        self.line_view.setItemDelegateForColumn(
+            LineTableModel.COL_SEND,
+            CursorTrackingLineEditDelegate(self._remember_send_cursor, self.line_view),
         )
         self.line_view.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.line_view.horizontalHeader().setStretchLastSection(True)
@@ -174,12 +180,22 @@ class MainWindow(QMainWindow):
         if idx.isValid():
             self.char_model.remove_row(idx.row())
 
+    def _remember_send_cursor(self, row: int, pos: int):
+        self._send_cursor_row = row
+        self._send_cursor_pos = pos
+
     def _insert_emoji(self, emoji: str):
         row = self._line_row()
         if row < 0:
             QMessageBox.information(self, "絵文字挿入", "挿入先のセリフ行を選択してください。")
             return
-        self.line_model.insert_emoji(row, emoji)
+        pos = self._send_cursor_pos if self._send_cursor_row == row else None
+        self.line_model.insert_emoji(row, emoji, pos)
+        self._send_cursor_row = row
+        if pos is None:
+            self._send_cursor_pos = len(self.line_model.rows[row].send_text)
+        else:
+            self._send_cursor_pos = pos + len(emoji)
 
     def _on_changed(self):
         self.dirty = True

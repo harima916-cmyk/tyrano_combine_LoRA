@@ -1,0 +1,39 @@
+# TyranoBuilder × Irodori-TTS 連携ツール 設定例
+# 実運用時は config.yaml にコピーしてパスを埋める。
+# 仕様の詳細は SPEC.md を参照。
+
+project:
+  ks_dir:        "data/scenario"        # .ks を再帰探索するルート
+  voice_out_dir: "data/voice"           # 音声の最終出力先（ゲームが参照）
+  cache_dir:     ".irodori_cache"       # TTS キャッシュ
+  state_file:    ".irodori_state.json"  # 差分・書き戻し状態
+
+irodori:
+  repo_dir:   "/path/to/Irodori-TTS"        # infer.py のあるディレクトリ
+  runner:     "uv run --no-sync python"     # 実行コマンド前置
+  checkpoint: "Aratako/Irodori-TTS-500M-v3"
+  num_steps:  32
+  seconds:    null
+  extra_args: []
+
+audio:
+  format: "ogg"       # voconfig の vostorage に合わせる
+  ffmpeg: "ffmpeg"
+
+tyrano:
+  voice_sebuf:     2
+  insert_voconfig: true
+  marker:          "; @irodori-tts"   # 挿入行を識別する冪等化マーカー
+
+# 音声化する「特定キャラ」のホワイトリスト。
+# ここに列挙したキャラのセリフだけが生成・組み込み対象になる。
+characters:
+  akane:
+    names: ["akane", "あかね"]          # .ks 名前欄の表記ゆれを吸収
+    lora_adapter: "/path/to/lora/akane" # 学習済み LoRA（必須）
+    ref_wav: null                       # 任意: 併用する参照音声
+    file_prefix: "akane"                # → akane_1.ogg, akane_2.ogg ...
+  yui:
+    names: ["yui", "ゆい"]
+    lora_adapter: "/path/to/lora/yui"
+    file_prefix: "yui"

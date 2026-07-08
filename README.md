@@ -7,8 +7,27 @@
 TyranoBuilder（`.ks`）との直接連携は複雑なため、間に CSV を挟んで疎結合にする方針。
 本ツールは **CSV → 音声ファイル生成まで** を担当する（tyrano への組み込みはスコープ外）。
 
-> 現状は **仕様策定フェーズ**。確定仕様は [`SPEC.md`](./SPEC.md)（CSV→音声生成 CLI）と
-> [`GUI_SPEC.md`](./GUI_SPEC.md)（CSV 作成 GUI）を参照。
+確定仕様は [`SPEC.md`](./SPEC.md)（CSV→音声生成 CLI）と
+[`GUI_SPEC.md`](./GUI_SPEC.md)（CSV 作成 GUI）を参照。
+
+## セットアップ / 使い方
+
+```bash
+pip install -r requirements.txt          # PyYAML(+ GUI 用 PySide6)
+cp config.example.yaml config.yaml       # repo_dir 等を自分の環境に合わせて編集
+
+# CLI（音声生成）
+python -m irodori_cli --csv scenario.csv validate            # 検証・件数
+python -m irodori_cli --csv scenario.csv build --dry-run     # 生成対象プレビュー
+python -m irodori_cli --csv scenario.csv build               # 差分生成
+python -m irodori_cli --csv scenario.csv build \
+    --out-dir 出力先 --copy-csv --group-by-char              # フォルダ出力（キャラ別＋CSV同梱）
+
+# GUI（CSV 作成エディタ）
+python -m irodori_gui
+```
+
+テスト: `python -m unittest discover -s tests`
 
 ## 構図
 

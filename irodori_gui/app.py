@@ -1,0 +1,405 @@
+"""シナリオCSV 作成 GUI メインウィンドウ（GUI_SPEC 準拠）。"""
+
+from __future__ import annotations
+
+import os
+import sys
+import tempfile
+
+from PySide6.QtCore import QProcess, Qt
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QComboBox,
+    QFileDialog,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QMainWindow,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QTableView,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+from irodori_csv import ParseError, Scenario, read_scenario, validate_scenario, write_scenario
+
+from .delegates import CharacterComboDelegate, LoraFolderDelegate
+from .emoji import load_emoji_palette
+from .models import CharacterTableModel, LineTableModel
+
+ENCODINGS = ["utf-8-sig", "utf-8", "cp932"]
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Irodori シナリオCSV エディタ")
+        self.resize(1000, 720)
+
+        self.current_path: str | None = None
+        self.config_path = "config.yaml"
+        self.dirty = False
+        self._proc: QProcess | None = None
+        self._player = None
+        self._audio_out = None
+
+        self.char_model = CharacterTableModel()
+        self.line_model = LineTableModel(self.char_model)
+        self.char_model.changed.connect(self._on_changed)
+        self.line_model.changed.connect(self._on_changed)
+        self.char_model.changed.connect(self.line_model.refresh_all)
+
+        self._build_ui()
+        self._new_file()
+
+    # ------------------------------------------------------------------ UI
+    def _build_ui(self):
+        central = QWidget()
+        root = QVBoxLayout(central)
+
+        # ツールバー
+        tb = self.addToolBar("main")
+        tb.addAction(QAction("新規", self, triggered=self._new_file))
+        tb.addAction(QAction("開く", self, triggered=self._open_file))
+        tb.addAction(QAction("保存", self, triggered=self._save_file))
+        tb.addAction(QAction("名前を付けて保存", self, triggered=self._save_as))
+        tb.addSeparator()
+        tb.addWidget(QLabel(" 文字コード: "))
+        self.enc_combo = QComboBox()
+        self.enc_combo.addItems(ENCODINGS)
+        tb.addWidget(self.enc_combo)
+        tb.addSeparator()
+        tb.addAction(QAction("設定ファイル…", self, triggered=self._choose_config))
+        self.gen_btn = QPushButton("▶ 一括生成…")
+        self.gen_btn.clicked.connect(self._run_bulk)
+        tb.addWidget(self.gen_btn)
+
+        # キャラクター定義
+        char_box = QGroupBox("キャラクター定義")
+        cb = QVBoxLayout(char_box)
+        self.char_view = QTableView()
+        self.char_view.setModel(self.char_model)
+        self.char_view.setItemDelegateForColumn(2, LoraFolderDelegate(self.char_view))
+        self.char_view.horizontalHeader().setStretchLastSection(True)
+        cb.addWidget(self.char_view)
+        crow = QHBoxLayout()
+        crow.addWidget(QPushButton("＋ 追加", clicked=self.char_model.add_row))
+        crow.addWidget(QPushButton("－ 削除", clicked=self._remove_char))
+        crow.addStretch()
+        cb.addLayout(crow)
+        root.addWidget(char_box)
+
+        # セリフ
+        line_box = QGroupBox("セリフ")
+        lb = QVBoxLayout(line_box)
+        self.line_view = QTableView()
+        self.line_view.setModel(self.line_model)
+        self.line_view.setItemDelegateForColumn(
+            LineTableModel.COL_CHAR, CharacterComboDelegate(self.char_model, self.line_view)
+        )
+        self.line_view.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.line_view.horizontalHeader().setStretchLastSection(True)
+        self.line_view.setColumnWidth(LineTableModel.COL_TEXT, 240)
+        self.line_view.setColumnWidth(LineTableModel.COL_SEND, 260)
+        lb.addWidget(self.line_view)
+        lrow = QHBoxLayout()
+        lrow.addWidget(QPushButton("＋ 行追加", clicked=self.line_model.add_row))
+        lrow.addWidget(QPushButton("複製", clicked=lambda: self.line_model.duplicate_row(self._line_row())))
+        lrow.addWidget(QPushButton("↑", clicked=lambda: self._move_line(-1)))
+        lrow.addWidget(QPushButton("↓", clicked=lambda: self._move_line(1)))
+        lrow.addWidget(QPushButton("削除", clicked=lambda: self.line_model.remove_row(self._line_row())))
+        lrow.addWidget(QPushButton("原文で上書き(再リンク)", clicked=lambda: self.line_model.relink(self._line_row())))
+        lrow.addStretch()
+        lrow.addWidget(QPushButton("🔊 お試し生成", clicked=self._run_preview))
+        lb.addLayout(lrow)
+        root.addWidget(line_box)
+
+        # 絵文字パレット
+        emoji_box = QGroupBox("絵文字パレット（クリックで選択行の送信テキストへ挿入）")
+        eb = QHBoxLayout(emoji_box)
+        eb.setSpacing(2)
+        wrap = QWidget()
+        wrap_layout = QHBoxLayout(wrap)
+        wrap_layout.setContentsMargins(0, 0, 0, 0)
+        for e in load_emoji_palette():
+            btn = QToolButton()
+            btn.setText(e.emoji)
+            btn.setToolTip(f"{e.meaning_ja}\n{e.meaning_en}")
+            btn.clicked.connect(lambda _=False, em=e.emoji: self._insert_emoji(em))
+            wrap_layout.addWidget(btn)
+        wrap_layout.addStretch()
+        from PySide6.QtWidgets import QScrollArea
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(wrap)
+        scroll.setFixedHeight(56)
+        eb.addWidget(scroll)
+        root.addWidget(emoji_box)
+
+        # 検証
+        val_box = QGroupBox("検証")
+        vb = QVBoxLayout(val_box)
+        self.val_list = QListWidget()
+        self.val_list.setFixedHeight(90)
+        vb.addWidget(self.val_list)
+        root.addWidget(val_box)
+
+        # 進捗 / ログ
+        self.progress = QProgressBar()
+        root.addWidget(self.progress)
+        self.log = QListWidget()
+        self.log.setFixedHeight(90)
+        root.addWidget(self.log)
+
+        self.setCentralWidget(central)
+
+    # ------------------------------------------------------------- helpers
+    def _line_row(self) -> int:
+        idx = self.line_view.currentIndex()
+        return idx.row() if idx.isValid() else -1
+
+    def _move_line(self, delta: int):
+        row = self._line_row()
+        new = self.line_model.move_row(row, delta)
+        self.line_view.selectRow(new)
+
+    def _remove_char(self):
+        idx = self.char_view.currentIndex()
+        if idx.isValid():
+            self.char_model.remove_row(idx.row())
+
+    def _insert_emoji(self, emoji: str):
+        row = self._line_row()
+        if row < 0:
+            QMessageBox.information(self, "絵文字挿入", "挿入先のセリフ行を選択してください。")
+            return
+        self.line_model.insert_emoji(row, emoji)
+
+    def _on_changed(self):
+        self.dirty = True
+        self._update_title()
+        self._revalidate()
+
+    def _update_title(self):
+        name = self.current_path or "(未保存)"
+        star = " *" if self.dirty else ""
+        self.setWindowTitle(f"Irodori シナリオCSV エディタ — {os.path.basename(name)}{star}")
+
+    def _scenario(self) -> Scenario:
+        return Scenario(self.char_model.characters(), self.line_model.lines())
+
+    def _revalidate(self):
+        self.val_list.clear()
+        issues = validate_scenario(self._scenario(), check_lora_exists=True, group_by_char=True)
+        for i in issues:
+            mark = "✖" if i.is_error else "⚠"
+            loc = f"[{i.section}:{i.index}] " if i.index >= 0 else ""
+            self.val_list.addItem(f"{mark} {loc}{i.message}")
+        if not issues:
+            self.val_list.addItem("問題なし")
+
+    # ------------------------------------------------------------- file ops
+    def _confirm_discard(self) -> bool:
+        if not self.dirty:
+            return True
+        r = QMessageBox.question(
+            self, "確認", "未保存の変更があります。破棄しますか？",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        return r == QMessageBox.Yes
+
+    def _new_file(self):
+        if not self._confirm_discard():
+            return
+        self.char_model.beginResetModel(); self.char_model.rows = []; self.char_model.endResetModel()
+        self.line_model.beginResetModel(); self.line_model.rows = []; self.line_model.linked = []; self.line_model.endResetModel()
+        self.char_model.add_row()
+        self.line_model.add_row()
+        self.current_path = None
+        self.dirty = False
+        self._update_title()
+        self._revalidate()
+
+    def _open_file(self):
+        if not self._confirm_discard():
+            return
+        path, _ = QFileDialog.getOpenFileName(self, "CSV を開く", "", "CSV (*.csv)")
+        if not path:
+            return
+        enc = self.enc_combo.currentText()
+        try:
+            sc = read_scenario(path, encoding=enc)
+        except (ParseError, OSError, UnicodeDecodeError) as e:
+            QMessageBox.critical(self, "読み込みエラー", str(e))
+            return
+        self._load_scenario(sc, path)
+
+    def _load_scenario(self, sc: Scenario, path: str | None):
+        self.char_model.beginResetModel(); self.char_model.rows = sc.characters; self.char_model.endResetModel()
+        self.line_model.beginResetModel()
+        self.line_model.rows = sc.lines
+        self.line_model.linked = [LineTableModel._infer_linked(l) for l in sc.lines]
+        self.line_model.endResetModel()
+        self.current_path = path
+        self.dirty = False
+        self._update_title()
+        self._revalidate()
+
+    def _save_file(self) -> bool:
+        if self.current_path is None:
+            return self._save_as()
+        return self._write(self.current_path)
+
+    def _save_as(self) -> bool:
+        path, _ = QFileDialog.getSaveFileName(self, "名前を付けて保存", "scenario.csv", "CSV (*.csv)")
+        if not path:
+            return False
+        return self._write(path)
+
+    def _write(self, path: str) -> bool:
+        try:
+            write_scenario(self._scenario(), path, encoding=self.enc_combo.currentText())
+        except OSError as e:
+            QMessageBox.critical(self, "保存エラー", str(e))
+            return False
+        self.current_path = path
+        self.dirty = False
+        self._update_title()
+        return True
+
+    def _choose_config(self):
+        path, _ = QFileDialog.getOpenFileName(self, "設定ファイルを選択", "", "YAML (*.yaml *.yml)")
+        if path:
+            self.config_path = path
+
+    # ------------------------------------------------------------- generation
+    def _python(self) -> str:
+        return sys.executable or "python3"
+
+    def _config_args(self) -> list[str]:
+        return ["--config", self.config_path] if self.config_path else []
+
+    def _run_bulk(self):
+        if self.dirty or self.current_path is None:
+            if not self._save_file():
+                return
+        issues = validate_scenario(self._scenario(), group_by_char=True)
+        if any(i.is_error for i in issues):
+            r = QMessageBox.question(
+                self, "検証エラー", "検証エラーがあります。続行しますか？",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if r != QMessageBox.Yes:
+                return
+        out_dir = QFileDialog.getExistingDirectory(self, "出力先フォルダを選択")
+        if not out_dir:
+            return
+        args = [
+            "-m", "irodori_cli", *self._config_args(), "--csv", self.current_path,
+            "build", "--out-dir", out_dir, "--copy-csv", "--group-by-char", "--progress",
+        ]
+        self._start_process(args, on_done=lambda code: self._bulk_done(code, out_dir))
+
+    def _bulk_done(self, code: int, out_dir: str):
+        self.log.addItem(f"完了 (code={code}) → {out_dir}")
+
+    def _run_preview(self):
+        row = self._line_row()
+        if row < 0:
+            QMessageBox.information(self, "お試し生成", "生成するセリフ行を選択してください。")
+            return
+        line = self.line_model.rows[row]
+        char = self.line_model.char_model_char(line.ref)
+        if char is None:
+            QMessageBox.warning(self, "お試し生成", "このセリフのキャラが未定義です。")
+            return
+        out = os.path.join(tempfile.gettempdir(), "irodori_preview", f"row{row}.wav")
+        args = [
+            "-m", "irodori_cli", *self._config_args(),
+            "preview", "--text", line.tts_text(), "--lora-dir", char.lora_dir, "--out", out,
+        ]
+        self._start_process(args, on_done=lambda code: self._preview_done(code, out))
+
+    def _preview_done(self, code: int, out: str):
+        if code == 0 and os.path.exists(out):
+            self._play(out)
+        else:
+            QMessageBox.warning(self, "お試し生成", "生成に失敗しました。ログを確認してください。")
+
+    def _play(self, path: str):
+        try:
+            from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+            from PySide6.QtCore import QUrl
+        except ImportError:
+            self.log.addItem(f"再生不可（QtMultimedia なし）: {path}")
+            return
+        self._player = QMediaPlayer()
+        self._audio_out = QAudioOutput()
+        self._player.setAudioOutput(self._audio_out)
+        self._player.setSource(QUrl.fromLocalFile(path))
+        self._player.play()
+        self.log.addItem(f"▶ 再生: {path}")
+
+    def _start_process(self, args: list[str], on_done):
+        if self._proc is not None:
+            QMessageBox.information(self, "実行中", "別の生成処理が実行中です。")
+            return
+        self.progress.setValue(0)
+        self.log.addItem("$ " + self._python() + " " + " ".join(args))
+        proc = QProcess(self)
+        proc.setProgram(self._python())
+        proc.setArguments(args)
+        proc.setProcessChannelMode(QProcess.MergedChannels)
+        proc.readyReadStandardOutput.connect(lambda: self._read_proc(proc))
+        proc.finished.connect(lambda code, _st: self._proc_finished(code, on_done))
+        self._proc = proc
+        self.gen_btn.setEnabled(False)
+        proc.start()
+
+    def _read_proc(self, proc: QProcess):
+        text = bytes(proc.readAllStandardOutput()).decode("utf-8", "replace")
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith("PROGRESS"):
+                parts = line.split()
+                if len(parts) >= 3 and "/" in parts[1]:
+                    done, total = parts[1].split("/")
+                    try:
+                        self.progress.setMaximum(int(total))
+                        self.progress.setValue(int(done))
+                    except ValueError:
+                        pass
+            self.log.addItem(line)
+        self.log.scrollToBottom()
+
+    def _proc_finished(self, code: int, on_done):
+        self._proc = None
+        self.gen_btn.setEnabled(True)
+        on_done(code)
+
+    def closeEvent(self, event):
+        if self._confirm_discard():
+            event.accept()
+        else:
+            event.ignore()
+
+
+def main():
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication(sys.argv)
+    win = MainWindow()
+    win.show()
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()

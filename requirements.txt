@@ -1,0 +1,5 @@
+# 共有ライブラリ + CLI
+PyYAML>=6.0
+
+# GUI（PySide6）。CLI のみ使う場合は不要。
+PySide6>=6.6

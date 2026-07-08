@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.irodori_cache/
+.irodori_state.json
+voices/
+config.yaml
+/build/
+/dist/
+*.spec
+.venv/

@@ -1,0 +1,22 @@
+[project]
+name = "tyrano-combine-lora"
+version = "0.1.0"
+description = "シナリオCSV → Irodori-TTS 一括音声生成ツール（CLI + GUI）"
+requires-python = ">=3.10"
+dependencies = ["PyYAML>=6.0"]
+
+[project.optional-dependencies]
+gui = ["PySide6>=6.6"]
+
+[project.scripts]
+irodori-tts-batch = "irodori_cli.cli:main"
+
+[project.gui-scripts]
+irodori-csv-editor = "irodori_gui.app:main"
+
+[tool.setuptools]
+packages = ["irodori_csv", "irodori_cli", "irodori_gui"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"

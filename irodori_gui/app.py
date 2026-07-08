@@ -225,23 +225,23 @@ class MainWindow(QMainWindow):
         self._active_send_editor = editor
 
     def _insert_emoji(self, emoji: str):
-        # 送信テキストを編集中なら、そのカーソル位置へ挿入（選択範囲は置換）
+        # 送信テキストを編集中なら、そのカーソル位置へ挿入する
         ed = self._active_send_editor
-        if ed is not None:
-            ed.insert(emoji)
-            return
-        # 未編集なら、選択行の送信テキストセルを編集開始してカーソル位置へ挿入
         row = self._line_row()
-        if row < 0:
-            QMessageBox.information(self, "絵文字挿入", "挿入先のセリフ行を選択してください。")
-            return
-        idx = self.line_model.index(row, LineTableModel.COL_SEND)
-        self.line_view.setCurrentIndex(idx)
-        self.line_view.edit(idx)
-        ed = self._active_send_editor
+        if ed is None:
+            # 未編集なら、選択行の送信テキストセルを編集開始する
+            if row < 0:
+                QMessageBox.information(self, "絵文字挿入", "挿入先のセリフ行を選択してください。")
+                return
+            idx = self.line_model.index(row, LineTableModel.COL_SEND)
+            self.line_view.setCurrentIndex(idx)
+            self.line_view.edit(idx)
+            ed = self._active_send_editor
         if ed is not None:
-            ed.insert(emoji)  # 開いた直後はカーソル末尾 → そこへ挿入
-        else:
+            # 全選択状態（編集開始直後など）でも上書きしないよう、選択を解除してから挿入
+            ed.deselect()
+            ed.insert(emoji)
+        elif row >= 0:
             self.line_model.insert_emoji(row, emoji)  # 最終手段: 末尾追加
 
     def _on_changed(self):

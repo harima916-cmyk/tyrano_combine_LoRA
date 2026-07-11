@@ -132,8 +132,8 @@ class MainWindow(QMainWindow):
         return w
 
     def _build_lines_tab(self) -> QWidget:
-        # 縦スプリッタ: 上=セリフ表(主役, 可変) / 下=絵文字パレット
-        splitter = QSplitter(Qt.Vertical)
+        # 横スプリッタ: 左=セリフ表(主役, 可変) / 右=絵文字パレット
+        splitter = QSplitter(Qt.Horizontal)
 
         top = QWidget()
         lb = QVBoxLayout(top)
@@ -172,13 +172,13 @@ class MainWindow(QMainWindow):
         lb.addLayout(lrow)
         splitter.addWidget(top)
 
-        splitter.addWidget(self._build_emoji_panel())
+        splitter.addWidget(self._build_emoji_panel(cols=1))
         splitter.setStretchFactor(0, 4)   # セリフ表を優先的に広く
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([560, 180])
+        splitter.setSizes([820, 260])
         return splitter
 
-    def _build_emoji_panel(self) -> QWidget:
+    def _build_emoji_panel(self, cols: int = 1) -> QWidget:
         box = QGroupBox("絵文字パレット（送信テキスト編集中はカーソル位置へ／未編集は末尾へ挿入）")
         box.setFocusPolicy(Qt.NoFocus)
         outer = QVBoxLayout(box)
@@ -192,7 +192,7 @@ class MainWindow(QMainWindow):
         grid = QGridLayout(grid_w)
         grid.setContentsMargins(2, 2, 2, 2)
         grid.setSpacing(3)
-        cols = 3  # 縦横グリッド（各ボタンに絵文字＋日本語の意味）
+        # 右枠は縦1列（各ボタンに絵文字＋日本語の意味）を既定にする
         for i, e in enumerate(load_emoji_palette()):
             btn = QToolButton()
             btn.setText(f"{e.emoji}  {e.meaning_ja}")

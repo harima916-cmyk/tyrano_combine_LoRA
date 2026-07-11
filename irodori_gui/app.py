@@ -168,7 +168,9 @@ class MainWindow(QMainWindow):
         lrow.addWidget(QPushButton("削除", clicked=lambda: self.line_model.remove_row(self._line_row())))
         lrow.addWidget(QPushButton("原文で上書き(再リンク)", clicked=lambda: self.line_model.relink(self._line_row())))
         lrow.addStretch()
-        lrow.addWidget(QPushButton("🔊 お試し生成", clicked=self._run_preview))
+        preview_btn = QPushButton("🔊 お試し生成", clicked=self._run_preview)
+        preview_btn.setProperty("accent", True)  # 淡アクセント（テーマの QPushButton[accent=true]）
+        lrow.addWidget(preview_btn)
         lb.addLayout(lrow)
         splitter.addWidget(top)
 
@@ -188,6 +190,7 @@ class MainWindow(QMainWindow):
         scroll.viewport().setFocusPolicy(Qt.NoFocus)
         scroll.setWidgetResizable(True)
         grid_w = QWidget()
+        grid_w.setObjectName("emojiGrid")  # QSS の透過背景ルール対象
         grid_w.setFocusPolicy(Qt.NoFocus)
         grid = QGridLayout(grid_w)
         grid.setContentsMargins(2, 2, 2, 2)
@@ -199,7 +202,7 @@ class MainWindow(QMainWindow):
             btn.setToolTip(e.meaning_en)
             btn.setFocusPolicy(Qt.NoFocus)
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            btn.setStyleSheet("QToolButton{ text-align:left; padding:3px 6px; }")
+            # テーマ(QGroupBox QToolButton)に見た目を委ねる（インラインstyleは付けない）
             r, c = divmod(i, cols)
             grid.addWidget(btn, r, c)
             btn.clicked.connect(lambda _=False, em=e.emoji: self._insert_emoji(em))
@@ -596,7 +599,10 @@ class MainWindow(QMainWindow):
 def main():
     from PySide6.QtWidgets import QApplication
 
+    from .theme import apply_theme
+
     app = QApplication(sys.argv)
+    apply_theme(app)  # ライトテーマ（style.qss）を適用
     win = MainWindow()
     win.show()
     sys.exit(app.exec())

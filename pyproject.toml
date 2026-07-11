@@ -17,6 +17,9 @@ irodori-csv-editor = "irodori_gui.app:main"
 [tool.setuptools]
 packages = ["irodori_csv", "irodori_cli", "irodori_gui"]
 
+[tool.setuptools.package-data]
+irodori_gui = ["style.qss"]
+
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"

@@ -1,0 +1,346 @@
+/* =========================================================================
+   Irodori シナリオCSV エディタ — ライト / スタイリッシュ テーマ (Qt QSS)
+   現行のタブ構成・ウィジェット構造はそのまま、見た目だけを差し替えます。
+   app 起動時に irodori_gui/theme.py の apply_theme(app) で読み込まれます。
+
+   パレット
+     背景(キャンバス)  #eceef3      パネル/表        #ffffff
+     文字(主)          #1b1d24      文字(淡)         #71757f  / #9aa0ab
+     罫線              #e5e7ec / #eef0f3 / #f2f3f6
+     アクセント        #5b53e6 (インディゴ)  淡い面 #edecfc  濃い文字 #4b43cf
+     成功              #1f9d6b      警告 #c8871a       エラー #d5453b
+   ========================================================================= */
+
+/* ---- ベース --------------------------------------------------------- */
+* {
+    font-family: "Zen Kaku Gothic New", "Yu Gothic UI", "Hiragino Sans",
+                 "Hiragino Kaku Gothic ProN", "Meiryo", "Noto Sans JP", sans-serif;
+    font-size: 13px;
+    color: #1b1d24;
+}
+
+QMainWindow,
+QDialog {
+    background: #eceef3;
+}
+
+QWidget#emojiGrid,
+QScrollArea,
+QScrollArea > QWidget > QWidget {
+    background: transparent;
+    border: none;
+}
+
+QLabel {
+    background: transparent;
+    color: #1b1d24;
+}
+
+QToolTip {
+    background: #1b1d24;
+    color: #ffffff;
+    border: none;
+    padding: 6px 9px;
+    border-radius: 7px;
+    font-size: 12px;
+}
+
+/* ---- ツールバー ----------------------------------------------------- */
+QToolBar {
+    background: #ffffff;
+    border: none;
+    border-bottom: 1px solid #e5e7ec;
+    padding: 9px 12px;
+    spacing: 6px;
+}
+QToolBar::separator {
+    background: #e5e7ec;
+    width: 1px;
+    margin: 4px 8px;
+}
+QToolBar QLabel {
+    color: #71757f;
+    font-size: 12px;
+    padding-left: 4px;
+}
+
+/* ツールバーのアクション（新規 / 開く / 保存 / 名前を付けて保存 / 設定ファイル…） */
+QToolButton {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    padding: 7px 13px;
+    color: #3a3d45;
+    font-weight: 500;
+}
+QToolButton:hover {
+    background: #f4f5f7;
+    color: #1b1d24;
+}
+QToolButton:pressed {
+    background: #e9ebf0;
+}
+QToolButton:checked {
+    background: #edecfc;
+    color: #4b43cf;
+}
+
+/* ツールバー右端の主要アクション: ▶ 一括生成…（塗りつぶしアクセント） */
+QToolBar QPushButton {
+    background: #5b53e6;
+    color: #ffffff;
+    border: none;
+    border-radius: 10px;
+    padding: 9px 18px;
+    font-weight: 700;
+    font-size: 13px;
+}
+QToolBar QPushButton:hover  { background: #6a62ef; }
+QToolBar QPushButton:pressed{ background: #4f47cf; }
+QToolBar QPushButton:disabled { background: #c8c5f0; color: #ffffff; }
+
+/* ---- 汎用ボタン（各タブの ＋追加 / 複製 / ↑ ↓ / 削除 など） --------- */
+QPushButton {
+    background: #ffffff;
+    border: 1px solid #e5e7ec;
+    border-radius: 9px;
+    padding: 7px 13px;
+    color: #3a3d45;
+    font-weight: 500;
+}
+QPushButton:hover   { background: #f6f7f9; border-color: #d7dae1; }
+QPushButton:pressed { background: #eceef3; }
+QPushButton:disabled{ color: #b0b4bd; background: #f6f7f9; }
+
+/* お試し生成など、意味的に強調したいものはコード側で
+   btn.setProperty("accent", True) を付けると淡アクセントになります（任意）。 */
+QPushButton[accent="true"] {
+    background: #edecfc;
+    border-color: #d9d6f7;
+    color: #4b43cf;
+    font-weight: 600;
+}
+QPushButton[accent="true"]:hover { background: #e4e1fb; }
+
+/* ---- タブ ----------------------------------------------------------- */
+QTabWidget::pane {
+    border: 1px solid #e5e7ec;
+    border-radius: 13px;
+    background: #ffffff;
+    top: -1px;
+    padding: 4px;
+}
+QTabBar { qproperty-drawBase: 0; }
+QTabBar::tab {
+    background: transparent;
+    color: #6b7280;
+    padding: 9px 18px;
+    margin: 4px 4px 8px 0;
+    border: none;
+    border-radius: 9px;
+    font-weight: 600;
+    font-size: 13px;
+}
+QTabBar::tab:selected {
+    background: #edecfc;
+    color: #4b43cf;
+}
+QTabBar::tab:hover:!selected {
+    background: #f4f5f7;
+    color: #1b1d24;
+}
+
+/* ---- コンボボックス（文字コード / セリフのキャラ選択デリゲート） ---- */
+QComboBox {
+    background: #ffffff;
+    border: 1px solid #e5e7ec;
+    border-radius: 8px;
+    padding: 5px 10px;
+    min-height: 20px;
+    color: #1b1d24;
+}
+QComboBox:hover  { border-color: #d7dae1; }
+QComboBox:focus  { border-color: #5b53e6; }
+QComboBox::drop-down {
+    border: none;
+    width: 22px;
+    subcontrol-origin: padding;
+    subcontrol-position: center right;
+}
+QComboBox QAbstractItemView {
+    background: #ffffff;
+    border: 1px solid #e5e7ec;
+    border-radius: 8px;
+    padding: 4px;
+    outline: none;
+    selection-background-color: #edecfc;
+    selection-color: #4b43cf;
+}
+
+/* ---- 行内エディタ（表のセル編集時に現れる QLineEdit） -------------- */
+QLineEdit {
+    background: #ffffff;
+    border: 1px solid #5b53e6;
+    border-radius: 7px;
+    padding: 4px 7px;
+    color: #1b1d24;
+    selection-background-color: #cfcbf8;
+    selection-color: #1b1d24;
+}
+
+/* ---- テーブル（キャラクター定義 / セリフ） ------------------------- */
+QTableView {
+    background: #ffffff;
+    alternate-background-color: #fbfbfc;
+    border: 1px solid #eef0f3;
+    border-radius: 11px;
+    gridline-color: #f2f3f6;
+    selection-background-color: #edecfc;
+    selection-color: #1b1d24;
+    outline: none;
+}
+QTableView::item {
+    padding: 7px 8px;
+    border: none;
+}
+QTableView::item:selected {
+    background: #edecfc;
+    color: #1b1d24;
+}
+QTableView QTableCornerButton::section {
+    background: #fbfbfc;
+    border: none;
+    border-bottom: 1px solid #eef0f3;
+}
+
+QHeaderView { background: transparent; }
+QHeaderView::section {
+    background: #fbfbfc;
+    color: #9aa0ab;
+    padding: 9px 10px;
+    border: none;
+    border-bottom: 1px solid #eef0f3;
+    font-weight: 700;
+    font-size: 11px;
+}
+QHeaderView::section:horizontal { border-right: 1px solid #f2f3f6; }
+QHeaderView::section:vertical   { border-right: 1px solid #eef0f3; color: #b0b4bd; }
+
+/* ---- リスト（検証 / 生成ログ） ------------------------------------- */
+QListWidget {
+    background: #ffffff;
+    border: 1px solid #eef0f3;
+    border-radius: 11px;
+    padding: 5px;
+    outline: none;
+}
+QListWidget::item {
+    padding: 7px 9px;
+    border-radius: 8px;
+    color: #4a4d55;
+}
+QListWidget::item:selected {
+    background: #edecfc;
+    color: #1b1d24;
+}
+QListWidget::item:hover:!selected {
+    background: #f6f7f9;
+}
+
+/* ---- 進捗バー ------------------------------------------------------- */
+QProgressBar {
+    background: #eef0f3;
+    border: none;
+    border-radius: 8px;
+    min-height: 14px;
+    max-height: 14px;
+    text-align: center;
+    color: #71757f;
+    font-size: 11px;
+    font-weight: 600;
+}
+QProgressBar::chunk {
+    background: #5b53e6;
+    border-radius: 8px;
+}
+
+/* ---- 絵文字パレット（QGroupBox 内の QToolButton） ------------------ */
+QGroupBox {
+    background: #ffffff;
+    border: 1px solid #e5e7ec;
+    border-radius: 13px;
+    margin-top: 12px;
+    padding: 10px 8px 8px;
+    font-weight: 600;
+    color: #71757f;
+    font-size: 12px;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 14px;
+    padding: 0 6px;
+    color: #71757f;
+}
+QGroupBox QToolButton {
+    text-align: left;
+    padding: 8px 10px;
+    border-radius: 9px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: #4a4d55;
+    font-size: 13px;
+    font-weight: 500;
+}
+QGroupBox QToolButton:hover   { background: #edecfc; color: #1b1d24; }
+QGroupBox QToolButton:pressed { background: #e0ddf9; }
+
+/* ---- スプリッタ ----------------------------------------------------- */
+QSplitter::handle          { background: transparent; }
+QSplitter::handle:horizontal { width: 14px; }
+QSplitter::handle:vertical   { height: 14px; }
+
+/* ---- スクロールバー ------------------------------------------------- */
+QScrollBar:vertical {
+    background: transparent;
+    width: 11px;
+    margin: 3px;
+}
+QScrollBar::handle:vertical {
+    background: #d3d7de;
+    border-radius: 5px;
+    min-height: 34px;
+}
+QScrollBar::handle:vertical:hover { background: #b9bec7; }
+QScrollBar:horizontal {
+    background: transparent;
+    height: 11px;
+    margin: 3px;
+}
+QScrollBar::handle:horizontal {
+    background: #d3d7de;
+    border-radius: 5px;
+    min-width: 34px;
+}
+QScrollBar::handle:horizontal:hover { background: #b9bec7; }
+QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
+QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+
+/* ---- ステータスバー ------------------------------------------------- */
+QStatusBar {
+    background: #ffffff;
+    color: #71757f;
+    border-top: 1px solid #e5e7ec;
+}
+QStatusBar::item { border: none; }
+
+/* ---- メッセージボックス / ダイアログのボタン ----------------------- */
+QMessageBox { background: #ffffff; }
+QMessageBox QLabel { color: #1b1d24; }
+QDialogButtonBox QPushButton { min-width: 84px; }
+QDialogButtonBox QPushButton:default {
+    background: #5b53e6;
+    color: #ffffff;
+    border: none;
+}
+QDialogButtonBox QPushButton:default:hover { background: #6a62ef; }

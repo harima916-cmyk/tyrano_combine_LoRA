@@ -6,7 +6,7 @@ import os
 import sys
 
 from PySide6.QtCore import QProcess, Qt
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -73,12 +73,20 @@ class MainWindow(QMainWindow):
         central = QWidget()
         root = QVBoxLayout(central)
 
-        # ツールバー
+        # ツールバー（ショートカット付き）
         tb = self.addToolBar("main")
-        tb.addAction(QAction("新規", self, triggered=self._new_file))
-        tb.addAction(QAction("開く", self, triggered=self._open_file))
-        tb.addAction(QAction("保存", self, triggered=self._save_file))
-        tb.addAction(QAction("名前を付けて保存", self, triggered=self._save_as))
+        act_new = QAction("新規", self, triggered=self._new_file)
+        act_new.setShortcut(QKeySequence.StandardKey.New)          # Ctrl+N
+        act_open = QAction("開く", self, triggered=self._open_file)
+        act_open.setShortcut(QKeySequence.StandardKey.Open)        # Ctrl+O
+        act_save = QAction("保存", self, triggered=self._save_file)
+        act_save.setShortcut(QKeySequence.StandardKey.Save)        # Ctrl+S
+        act_save_as = QAction("名前を付けて保存", self, triggered=self._save_as)
+        act_save_as.setShortcut(QKeySequence.StandardKey.SaveAs)   # Ctrl+Shift+S
+        for a in (act_new, act_open, act_save, act_save_as):
+            a.setShortcutContext(Qt.ApplicationShortcut)
+            self.addAction(a)  # ツールバー非表示時もショートカットが効くように
+            tb.addAction(a)
         tb.addSeparator()
         tb.addWidget(QLabel(" 文字コード: "))
         self.enc_combo = QComboBox()
@@ -331,14 +339,27 @@ class MainWindow(QMainWindow):
             self.val_list.addItem("問題なし")
 
     # ------------------------------------------------------------- file ops
-    def _confirm_discard(self) -> bool:
+    def _maybe_save(self) -> bool:
+        """未保存があれば 保存/破棄/キャンセル を尋ねる。続行してよいなら True。
+
+        保存を選んで実際に保存できたら True、破棄なら True、キャンセルまたは
+        保存に失敗/中止したら False（＝終了・新規・開くを中断）。
+        """
         if not self.dirty:
             return True
-        r = QMessageBox.question(
-            self, "確認", "未保存の変更があります。破棄しますか？",
-            QMessageBox.Yes | QMessageBox.No,
+        r = QMessageBox.warning(
+            self, "未保存の変更",
+            "未保存の変更があります。保存しますか？",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
         )
-        return r == QMessageBox.Yes
+        if r == QMessageBox.StandardButton.Save:
+            return self._save_file()   # 保存成功で True、名前付け保存を中止したら False
+        if r == QMessageBox.StandardButton.Discard:
+            return True
+        return False  # Cancel
 
     def _clear_send_editor_state(self):
         """モデルリセット前に、破棄されうる編集中エディタ参照を無効化する。"""
@@ -349,7 +370,7 @@ class MainWindow(QMainWindow):
         self._send_cursor_pos = None
 
     def _new_file(self):
-        if not self._confirm_discard():
+        if not self._maybe_save():
             return
         self._clear_send_editor_state()
         self.char_model.beginResetModel(); self.char_model.rows = []; self.char_model.endResetModel()
@@ -362,7 +383,7 @@ class MainWindow(QMainWindow):
         self._revalidate()
 
     def _open_file(self):
-        if not self._confirm_discard():
+        if not self._maybe_save():
             return
         path, _ = QFileDialog.getOpenFileName(self, "CSV を開く", "", "CSV (*.csv)")
         if not path:
@@ -533,7 +554,7 @@ class MainWindow(QMainWindow):
         on_done(code)
 
     def closeEvent(self, event):
-        if self._confirm_discard():
+        if self._maybe_save():
             event.accept()
         else:
             event.ignore()

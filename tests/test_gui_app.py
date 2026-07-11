@@ -89,5 +89,53 @@ class TestEmojiInsertApp(unittest.TestCase):
         self.assertEqual(w.line_model.rows[0].send_text, "😊🎉test")
 
 
+@unittest.skipUnless(HAVE_QT, "PySide6/offscreen が使えない環境ではスキップ")
+class TestSavePromptAndShortcut(unittest.TestCase):
+    def test_ctrl_s_shortcut_on_save_action(self):
+        from PySide6.QtGui import QKeySequence
+
+        w = MainWindow()
+        save = [a for a in w.actions() if a.text() == "保存"]
+        self.assertTrue(save, "保存アクションが存在する")
+        self.assertEqual(save[0].shortcut(), QKeySequence(QKeySequence.StandardKey.Save))
+
+    def test_maybe_save_paths(self):
+        import tempfile
+
+        from PySide6.QtWidgets import QMessageBox
+
+        w = MainWindow()
+        w.line_model.setData(w.line_model.index(0, L.COL_CHAR), "1", role=2)
+        w.line_model.setData(w.line_model.index(0, L.COL_TEXT), "やあ", role=2)
+        tmp = tempfile.mktemp(suffix=".csv")
+        w.current_path = tmp
+        orig = QMessageBox.warning
+        try:
+            # 保存 → 実際に保存され、dirty 解除、続行 True
+            w.dirty = True
+            QMessageBox.warning = lambda *a, **k: QMessageBox.StandardButton.Save
+            self.assertTrue(w._maybe_save())
+            self.assertFalse(w.dirty)
+            self.assertTrue(os.path.exists(tmp))
+            os.remove(tmp)
+            # 破棄 → 続行 True、保存しない
+            w.dirty = True
+            QMessageBox.warning = lambda *a, **k: QMessageBox.StandardButton.Discard
+            self.assertTrue(w._maybe_save())
+            self.assertFalse(os.path.exists(tmp))
+            # キャンセル → 続行 False（終了/新規/開くを中断）
+            w.dirty = True
+            QMessageBox.warning = lambda *a, **k: QMessageBox.StandardButton.Cancel
+            self.assertFalse(w._maybe_save())
+            # 変更なし → 尋ねずに True
+            w.dirty = False
+            QMessageBox.warning = lambda *a, **k: (_ for _ in ()).throw(AssertionError("prompt不要"))
+            self.assertTrue(w._maybe_save())
+        finally:
+            QMessageBox.warning = orig
+            if os.path.exists(tmp):
+                os.remove(tmp)
+
+
 if __name__ == "__main__":
     unittest.main()

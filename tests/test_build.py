@@ -83,6 +83,17 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(res.skipped, 2)
         self.assertEqual(runner2.calls, 1)
 
+    def test_force_bypasses_cache_reinfers(self):
+        # --force はキャッシュがあっても infer を再実行して作り直す
+        runner = FakeRunner()
+        b = Builder(self.cfg, runner)
+        b.build(_scenario())
+        first = runner.calls
+        self.assertEqual(first, 3)
+        res = b.build(_scenario(), force=True)
+        self.assertEqual(res.generated, 3)
+        self.assertEqual(runner.calls, first + 3)  # 再生成された（コピーだけでない）
+
     def test_cache_hit_new_outdir(self):
         # 一度生成後、別フォルダへ出力すると infer は走らずキャッシュからコピー
         runner = FakeRunner()

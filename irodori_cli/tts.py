@@ -92,3 +92,14 @@ class InferRunner:
             )
         if not os.path.exists(out_wav):
             raise RuntimeError(f"infer.py が出力を生成しませんでした: {out_wav}")
+        # 壊れ/空ファイルをキャッシュしないための下限チェック（正常な wav は数KB以上）
+        size = os.path.getsize(out_wav)
+        if size < 128:
+            try:
+                os.remove(out_wav)
+            except OSError:
+                pass
+            raise RuntimeError(
+                f"infer.py の出力が異常に小さい（{size} bytes）。生成に失敗した可能性があります: {out_wav}\n"
+                f"stdout: {(proc.stdout or '').strip()[-500:]}"
+            )

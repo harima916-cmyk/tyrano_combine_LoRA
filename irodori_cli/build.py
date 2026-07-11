@@ -60,12 +60,15 @@ class Builder:
     def _cache_path(self, h: str) -> str:
         return os.path.join(self.config.cache_dir, f"{h}.wav")
 
-    def ensure_cached(self, assignment: LineAssignment) -> str:
-        """キャッシュに音声を用意し、その wav パスを返す（無ければ infer 実行）。"""
+    def ensure_cached(self, assignment: LineAssignment, force: bool = False) -> str:
+        """キャッシュに音声を用意し、その wav パスを返す。
+
+        force=True のときはキャッシュがあっても infer を再実行して作り直す。
+        """
         text = assignment.line.tts_text()
         h = line_hash(text, assignment.line.ref, assignment.character.lora_dir, self.tts_params)
         cache_wav = self._cache_path(h)
-        if not os.path.exists(cache_wav):
+        if force or not os.path.exists(cache_wav):
             os.makedirs(self.config.cache_dir, exist_ok=True)
             self.runner.infer(text, assignment.character.lora_dir, cache_wav)
         return cache_wav
@@ -130,7 +133,7 @@ class Builder:
                 continue
 
             try:
-                cache_wav = self.ensure_cached(a)
+                cache_wav = self.ensure_cached(a, force=force)
                 os.makedirs(os.path.dirname(os.path.abspath(target)), exist_ok=True)
                 shutil.copyfile(cache_wav, target)
                 state[rel] = h

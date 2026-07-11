@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QFileDialog,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -20,7 +21,11 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSplitter,
     QTableView,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -98,9 +103,19 @@ class MainWindow(QMainWindow):
         self.gen_btn.clicked.connect(self._run_bulk)
         tb.addWidget(self.gen_btn)
 
-        # キャラクター定義
-        char_box = QGroupBox("キャラクター定義")
-        cb = QVBoxLayout(char_box)
+        # メイン: タブ構成（セリフを主役に、定義・検証/ログは別タブ）
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self._build_lines_tab(), "セリフ")
+        self.tabs.addTab(self._build_chars_tab(), "キャラクター定義")
+        self._checks_tab_index = self.tabs.addTab(self._build_checks_tab(), "検証 / 生成ログ")
+        root.addWidget(self.tabs)
+
+        self.setCentralWidget(central)
+
+    # --------------------------------------------------------------- tabs
+    def _build_chars_tab(self) -> QWidget:
+        w = QWidget()
+        cb = QVBoxLayout(w)
         self.char_view = QTableView()
         self.char_view.setModel(self.char_model)
         self.char_view.setItemDelegateForColumn(2, LoraFolderDelegate(self.char_view))
@@ -114,11 +129,15 @@ class MainWindow(QMainWindow):
         crow.addWidget(QPushButton("－ 削除", clicked=self._remove_char))
         crow.addStretch()
         cb.addLayout(crow)
-        root.addWidget(char_box)
+        return w
 
-        # セリフ
-        line_box = QGroupBox("セリフ")
-        lb = QVBoxLayout(line_box)
+    def _build_lines_tab(self) -> QWidget:
+        # 縦スプリッタ: 上=セリフ表(主役, 可変) / 下=絵文字パレット
+        splitter = QSplitter(Qt.Vertical)
+
+        top = QWidget()
+        lb = QVBoxLayout(top)
+        lb.setContentsMargins(0, 0, 0, 0)
         self.line_view = QTableView()
         self.line_view.setModel(self.line_model)
         self.line_view.setItemDelegateForColumn(
@@ -133,7 +152,6 @@ class MainWindow(QMainWindow):
             EditorTrackingDelegate(self._set_text_editor, self.line_view),
         )
         self.line_view.setSelectionBehavior(QAbstractItemView.SelectRows)
-        # 長文を省略せず全文表示: 折り返し＋行高さ自動調整
         self.line_view.setWordWrap(True)
         self.line_view.setTextElideMode(Qt.ElideNone)
         self.line_view.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
@@ -152,62 +170,64 @@ class MainWindow(QMainWindow):
         lrow.addStretch()
         lrow.addWidget(QPushButton("🔊 お試し生成", clicked=self._run_preview))
         lb.addLayout(lrow)
-        root.addWidget(line_box)
+        splitter.addWidget(top)
 
-        # 絵文字パレット
-        emoji_box = QGroupBox("絵文字パレット（送信テキストを編集中はカーソル位置へ／未編集は末尾へ挿入）")
-        emoji_box.setFocusPolicy(Qt.NoFocus)
-        eb = QHBoxLayout(emoji_box)
-        eb.setSpacing(2)
-        wrap = QWidget()
-        wrap.setFocusPolicy(Qt.NoFocus)  # ラッパーもフォーカスを奪わない
-        wrap_layout = QHBoxLayout(wrap)
-        wrap_layout.setContentsMargins(0, 0, 0, 0)
-        for e in load_emoji_palette():
-            btn = QToolButton()
-            btn.setText(e.emoji)
-            btn.setToolTip(f"{e.meaning_ja}\n{e.meaning_en}")
-            # フォーカスを奪わない → 編集中セルのエディタを閉じずにカーソル位置へ挿入できる
-            btn.setFocusPolicy(Qt.NoFocus)
-            btn.clicked.connect(lambda _=False, em=e.emoji: self._insert_emoji(em))
-            wrap_layout.addWidget(btn)
-        wrap_layout.addStretch()
-        from PySide6.QtWidgets import QScrollArea
+        splitter.addWidget(self._build_emoji_panel())
+        splitter.setStretchFactor(0, 4)   # セリフ表を優先的に広く
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([560, 180])
+        return splitter
 
+    def _build_emoji_panel(self) -> QWidget:
+        box = QGroupBox("絵文字パレット（送信テキスト編集中はカーソル位置へ／未編集は末尾へ挿入）")
+        box.setFocusPolicy(Qt.NoFocus)
+        outer = QVBoxLayout(box)
+        outer.setContentsMargins(4, 4, 4, 4)
         scroll = QScrollArea()
-        # スクロールエリアと viewport もフォーカスを奪わない（編集中エディタを閉じさせない）
         scroll.setFocusPolicy(Qt.NoFocus)
         scroll.viewport().setFocusPolicy(Qt.NoFocus)
         scroll.setWidgetResizable(True)
-        scroll.setWidget(wrap)
-        scroll.setFixedHeight(56)
-        eb.addWidget(scroll)
-        root.addWidget(emoji_box)
+        grid_w = QWidget()
+        grid_w.setFocusPolicy(Qt.NoFocus)
+        grid = QGridLayout(grid_w)
+        grid.setContentsMargins(2, 2, 2, 2)
+        grid.setSpacing(3)
+        cols = 3  # 縦横グリッド（各ボタンに絵文字＋日本語の意味）
+        for i, e in enumerate(load_emoji_palette()):
+            btn = QToolButton()
+            btn.setText(f"{e.emoji}  {e.meaning_ja}")
+            btn.setToolTip(e.meaning_en)
+            btn.setFocusPolicy(Qt.NoFocus)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            btn.setStyleSheet("QToolButton{ text-align:left; padding:3px 6px; }")
+            r, c = divmod(i, cols)
+            grid.addWidget(btn, r, c)
+            btn.clicked.connect(lambda _=False, em=e.emoji: self._insert_emoji(em))
+        for c in range(cols):
+            grid.setColumnStretch(c, 1)
+        scroll.setWidget(grid_w)
+        outer.addWidget(scroll)
+        return box
 
-        # 検証
-        val_box = QGroupBox("検証")
-        vb = QVBoxLayout(val_box)
+    def _build_checks_tab(self) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.addWidget(QLabel("検証"))
         self.val_list = QListWidget()
-        self.val_list.setFixedHeight(90)
-        vb.addWidget(self.val_list)
-        root.addWidget(val_box)
-
-        # 進捗 / ログ
+        v.addWidget(self.val_list, 1)
         self.progress = QProgressBar()
-        root.addWidget(self.progress)
+        v.addWidget(self.progress)
         log_head = QHBoxLayout()
         log_head.addWidget(QLabel("生成ログ"))
         log_head.addStretch()
         log_head.addWidget(QPushButton("ログをコピー", clicked=self._copy_log))
         log_head.addWidget(QPushButton("ログを保存…", clicked=self._save_log))
         log_head.addWidget(QPushButton("クリア", clicked=lambda: self.log.clear()))
-        root.addLayout(log_head)
+        v.addLayout(log_head)
         self.log = QListWidget()
-        self.log.setFixedHeight(90)
         self.log.setSelectionMode(QListWidget.ExtendedSelection)
-        root.addWidget(self.log)
-
-        self.setCentralWidget(central)
+        v.addWidget(self.log, 1)
+        return w
 
     # ------------------------------------------------------------- log utils
     def _log_text(self) -> str:
@@ -337,6 +357,16 @@ class MainWindow(QMainWindow):
             self.val_list.addItem(f"{mark} {loc}{i.message}")
         if not issues:
             self.val_list.addItem("問題なし")
+        # 検証タブが隠れていても気づけるよう、見出しに件数バッジを出す
+        errors = sum(1 for i in issues if i.is_error)
+        warns = len(issues) - errors
+        badge = ""
+        if errors:
+            badge += f"  ✖{errors}"
+        if warns:
+            badge += f"  ⚠{warns}"
+        if getattr(self, "_checks_tab_index", None) is not None:
+            self.tabs.setTabText(self._checks_tab_index, "検証 / 生成ログ" + badge)
 
     # ------------------------------------------------------------- file ops
     def _maybe_save(self) -> bool:
@@ -467,6 +497,9 @@ class MainWindow(QMainWindow):
         out_dir = QFileDialog.getExistingDirectory(self, "出力先フォルダを選択")
         if not out_dir:
             return
+        # 進捗・ログが見えるよう検証/ログタブへ切り替える
+        if getattr(self, "_checks_tab_index", None) is not None:
+            self.tabs.setCurrentIndex(self._checks_tab_index)
         args = [
             "-m", "irodori_cli", *self._config_args(), "--csv", self.current_path,
             "build", "--out-dir", out_dir, "--copy-csv", "--group-by-char", "--progress",

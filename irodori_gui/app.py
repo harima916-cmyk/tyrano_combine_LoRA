@@ -175,9 +175,9 @@ class MainWindow(QMainWindow):
         splitter.addWidget(top)
 
         splitter.addWidget(self._build_emoji_panel(cols=1))
-        splitter.setStretchFactor(0, 4)   # セリフ表を優先的に広く
+        splitter.setStretchFactor(0, 5)   # セリフ表を優先的に広く
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([820, 260])
+        splitter.setSizes([900, 210])
         return splitter
 
     def _build_emoji_panel(self, cols: int = 1) -> QWidget:
@@ -193,8 +193,8 @@ class MainWindow(QMainWindow):
         grid_w.setObjectName("emojiGrid")  # QSS の透過背景ルール対象
         grid_w.setFocusPolicy(Qt.NoFocus)
         grid = QGridLayout(grid_w)
-        grid.setContentsMargins(2, 2, 2, 2)
-        grid.setSpacing(3)
+        grid.setContentsMargins(1, 1, 1, 1)
+        grid.setSpacing(1)
         # 右枠は縦1列（各ボタンに絵文字＋日本語の意味）を既定にする
         for i, e in enumerate(load_emoji_palette()):
             btn = QToolButton()

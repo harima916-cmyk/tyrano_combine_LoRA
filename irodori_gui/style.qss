@@ -284,12 +284,12 @@ QGroupBox::title {
 }
 QGroupBox QToolButton {
     text-align: left;
-    padding: 8px 10px;
-    border-radius: 9px;
+    padding: 3px 7px;
+    border-radius: 7px;
     border: 1px solid transparent;
     background: transparent;
     color: #4a4d55;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 500;
 }
 QGroupBox QToolButton:hover   { background: #edecfc; color: #1b1d24; }

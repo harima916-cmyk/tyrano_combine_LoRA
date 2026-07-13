@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QFileDialog,
-    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -192,22 +191,30 @@ class MainWindow(QMainWindow):
         grid_w = QWidget()
         grid_w.setObjectName("emojiGrid")  # QSS の透過背景ルール対象
         grid_w.setFocusPolicy(Qt.NoFocus)
-        grid = QGridLayout(grid_w)
-        grid.setContentsMargins(1, 1, 1, 1)
-        grid.setSpacing(1)
-        # 右枠は縦1列（各ボタンに絵文字＋日本語の意味）を既定にする
-        for i, e in enumerate(load_emoji_palette()):
+        vbox = QVBoxLayout(grid_w)
+        vbox.setContentsMargins(1, 1, 1, 1)
+        vbox.setSpacing(1)
+        # カテゴリ別に見出しを挟んで縦に並べる（効果の分類ごとにグルーピング）
+        current_cat = None
+        for e in load_emoji_palette():
+            if e.category and e.category != current_cat:
+                current_cat = e.category
+                hdr = QLabel(f"― {e.category} ―")
+                hdr.setObjectName("emojiCategory")
+                hdr.setFocusPolicy(Qt.NoFocus)
+                vbox.addWidget(hdr)
             btn = QToolButton()
             btn.setText(f"{e.emoji}  {e.meaning_ja}")
-            btn.setToolTip(e.meaning_en)
+            tip = e.meaning_en
+            if e.example:
+                tip = f"{e.meaning_en}\n入力例: {e.example}"
+            btn.setToolTip(tip)
             btn.setFocusPolicy(Qt.NoFocus)
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             # テーマ(QGroupBox QToolButton)に見た目を委ねる（インラインstyleは付けない）
-            r, c = divmod(i, cols)
-            grid.addWidget(btn, r, c)
+            vbox.addWidget(btn)
             btn.clicked.connect(lambda _=False, em=e.emoji: self._insert_emoji(em))
-        for c in range(cols):
-            grid.setColumnStretch(c, 1)
+        vbox.addStretch()
         scroll.setWidget(grid_w)
         outer.addWidget(scroll)
         return box

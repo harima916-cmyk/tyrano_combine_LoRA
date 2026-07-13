@@ -33,7 +33,7 @@ GUI は「CSV を正しい形式で読み書き・検証するエディタ」に
 - セリフの管理（キャラをドロップダウン選択、原文・送信テキスト入力、行の並べ替え）。
 - **原文 → 送信テキストの自動反映（一方向）**（§5.2.1）。
 - 出力ファイル名のライブプレビュー。
-- 顔文字（絵文字）挿入パレット（意味付き 39 種、§5.3 / 付録 B）。
+- 顔文字（絵文字）挿入パレット（効果別カテゴリ分類（45 種）、§5.3 / 付録 B）。
 - CSV の新規/開く/保存/名前を付けて保存（文字コード選択、`SPEC.md` §4 形式）。
 - リアルタイム検証とエラー表示。
 - **選択行のお試し生成と試聴**（§5.6）。
@@ -192,7 +192,7 @@ GUI は「CSV を正しい形式で読み書き・検証するエディタ」に
 **自動テスト**: R4/クランプは `tests/test_gui_models.py`（Qt 不要）。
 R1〜R3 はヘッドレス（`QT_QPA_PLATFORM=offscreen`）で `line_view.edit()` →
 エディタに `setCursorPosition()` → `_insert_emoji()` を呼んで検証する。
-- 収録は **付録 B の 39 種**（`emoji_palette.tsv` を読み込む）。各ボタンは絵文字を表示し、
+- 収録は **付録 B（効果別 4 カテゴリ・45 種）**（`emoji_palette.tsv` を読み込む）。各ボタンは絵文字を表示し、
   **ツールチップに意味（日本語）** を出す（例 🥺 →「声を震わせながら、自信のなさげに」）。
 - パレットは `emoji_palette.tsv`（`emoji / meaning_ja / meaning_en` の TSV）を編集して増減できる。
 
@@ -368,49 +368,75 @@ irodori_gui/        # GUI: PySide6 アプリ
 - CSV 本体仕様: [`SPEC.md`](./SPEC.md) §4
 - Irodori-TTS（絵文字スタイル制御）: https://github.com/Aratako/Irodori-TTS
 
-## 付録 B: 絵文字パレット（`emoji_palette.tsv`）
+## 付録 B: 絵文字パレット（`emoji_palette.tsv`）— 効果別カテゴリ
 
-送信テキストに挿入して感情・話し方・SE 的表現を制御する。GUI はこの TSV を読み込み、
-各ボタンのツールチップに意味（日本語）を表示する。列は `emoji / meaning_ja / meaning_en`。
+送信テキストに挿入して演技・非言語音・間/速度・音響を制御する。TSV 列は
+`emoji / meaning_ja / meaning_en / category / example`。GUI は **category ごとに見出し**（`― カテゴリ名 ―`）
+を挟んで縦に並べ、ツールチップに英語の意味と入力例を表示する。
+挿入位置: 感情・話し方/間・速度/音響 はセリフ・文節の**前**、非言語音は**音を出したい位置**。
 
-| 絵文字 | 意味（日本語） | Meaning (EN) |
-|---|---|---|
-| 👂 | 囁き、耳元の音 | Whisper, sounds close to the ear |
-| 😮‍💨 | 吐息、溜息、寝息 | Breath, sigh, sleeping breath |
-| ⏸️ | 間、沈黙 | Pause, silence |
-| 🤭 | 笑い（くすくす、含み笑いなど） | Chuckle, giggle, suppressed laugh |
-| 🥵 | 喘ぎ、うめき声、唸り声 | Panting, moan, groan |
-| 📢 | エコー、リバーブ | Echo, reverb |
-| 😏 | からかうように、甘えるように | Teasing, playfully sweet / coaxing |
-| 🥺 | 声を震わせながら、自信のなさげに | Trembling voice, timidly / uncertainly |
-| 🌬️ | 息切れ、荒い息遣い、呼吸音 | Shortness of breath, heavy breathing |
-| 😮 | 息をのむ | Gasp |
-| 👅 | 舐める音、咀嚼音、水音 | Licking sound, chewing sound, wet sound |
-| 💋 | リップノイズ | Lip smack / lip noise |
-| 🫶 | 優しく | Gently, tenderly |
-| 😭 | 嗚咽、泣き声、悲しみ | Sobbing, crying, sorrowfully / sadly |
-| 😱 | 悲鳴、叫び、絶叫 | Scream, shout, shriek |
-| 😪 | 眠そうに、気だるげに | Sleepily, sluggishly / languidly |
-| ⏩ | 早口、一気にまくしたてる、急いで | Fast-speaking, rapid-fire, hurriedly |
-| 📞 | 電話越し、スピーカー越しのような音 | Over the phone, through a speaker |
-| 🐢 | ゆっくりと | Slowly |
-| 🥤 | 唾を飲み込む音 | Gulp, swallowing sound |
-| 🤧 | 咳き込み、鼻をすする、くしゃみ、咳払い | Coughing, sniffling, sneeze, clearing throat |
-| 😒 | 舌打ち | Tutting, clicking tongue |
-| 😰 | 慌てて、動揺、緊張、どもり | Panicked, agitated, nervous, stuttering |
-| 😆 | 喜びながら | Joyfully, happily |
-| 😠 | 怒り、不満げに、拗ねながら | Angry, displeased, sulking |
-| 😲 | 驚き、感嘆 | Surprise, awe / exclamation |
-| 🥱 | あくび | Yawn |
-| 😖 | 苦しげに | Painfully, agonizingly |
-| 😟 | 心配そうに | Anxiously, worriedly |
-| 🫣 | 恥ずかしそうに、照れながら | Shyly, bashfully |
-| 🙄 | 呆れたように | Exasperatedly, rolling eyes |
-| 😊 | 楽しげに、嬉しそうに | Cheerfully, gladly |
-| 👌 | 相槌、頷く音 | Backchanneling, sound of agreement |
-| 🙏 | 懇願するように | Pleadingly, begging |
-| 🥴 | 酔っ払って | Drunkenly |
-| 🎵 | 鼻歌 | Humming |
-| 🤐 | 口を塞がれて | Muffled (mouth covered) |
-| 😌 | 安堵、満足げに | Relieved, contentedly |
-| 🤔 | 疑問の声 | Questioning voice, wondering |
+### 感情・話し方（24）
+
+| 絵文字 | 効果 |
+|---|---|
+| 👂 | 囁き・耳元の音 |
+| 😏 | からかう・甘える |
+| 🥺 | 震え声・自信なさげ |
+| 🫶 | 優しく |
+| 😭 | 泣き声・嗚咽・悲しみ |
+| 😱 | 悲鳴・叫び・絶叫 |
+| 😪 | 眠そう・気だるげ |
+| 😰 | 慌てる・動揺・緊張 |
+| 😆 | 喜び |
+| 💥 | 勢いよく |
+| 😠 | 怒り・不満・拗ねる |
+| 😲 | 驚き・感嘆 |
+| 😖 | 苦しげ |
+| 😟 | 心配・不安 |
+| 🫣 | 照れ・恥ずかしそう |
+| 🙄 | 呆れ |
+| 😊 | 楽しげ・嬉しそう |
+| 😎 | 得意げ・自信ありげ |
+| 🙏 | 懇願・お願い |
+| 🥴 | 酔っ払った声 |
+| 😌 | 安堵・満足 |
+| 🤔 | 疑問の声 |
+| 💪 | 力を込めて・力強く |
+| 📖 | 朗読・ナレーション |
+
+### 非言語音（15）
+
+| 絵文字 | 効果 |
+|---|---|
+| 😮‍💨 | 吐息・溜息・寝息 |
+| 🤭 | くすくす笑い・含み笑い |
+| 🥵 | 喘ぎ・うめき・唸り声 |
+| 🌬️ | 息切れ・荒い息・呼吸音 |
+| 😮 | 息をのむ |
+| 👅 | 舐める音・咀嚼音・水音 |
+| 💋 | リップノイズ |
+| 😴 | 寝言・いびき |
+| 🥤 | 唾を飲み込む音 |
+| 🤧 | 咳・鼻すすり・くしゃみ・咳払い |
+| 😒 | 舌打ち |
+| 🥱 | あくび |
+| 👌 | 相槌・頷く音 |
+| 🎵 | 鼻歌 |
+| 👃 | 匂いを嗅ぐ音 |
+
+### 間・速度（3）
+
+| 絵文字 | 効果 |
+|---|---|
+| ⏸️ | 間・沈黙 |
+| ⏩ | 早口・一気にまくしたてる |
+| 🐢 | ゆっくり話す |
+
+### 音響・聞こえ方（3）
+
+| 絵文字 | 効果 |
+|---|---|
+| 📢 | エコー・リバーブ |
+| 📞 | 電話・スピーカー越し |
+| 🤐 | 口を塞がれた声・こもった声 |
+

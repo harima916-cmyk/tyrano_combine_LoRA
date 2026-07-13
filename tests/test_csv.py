@@ -157,6 +157,19 @@ class TestValidate(unittest.TestCase):
         issues = validate_scenario(sc, check_lora_exists=False, group_by_char=True)
         self.assertTrue(any("キャラ名" in i.message and not i.is_error for i in issues))
 
+    def test_duplicate_output_name_allowed_in_different_group_folders(self):
+        sc = Scenario(
+            characters=[
+                Character("あかね", "1", "/l", "line_"),
+                Character("ゆい", "2", "/l", "line_"),
+            ],
+            lines=[Line("1", "t", "t"), Line("2", "t", "t")],
+        )
+        flat_issues = validate_scenario(sc, check_lora_exists=False)
+        self.assertTrue(any("出力名" in i.message and i.is_error for i in flat_issues))
+        grouped_issues = validate_scenario(sc, check_lora_exists=False, group_by_char=True)
+        self.assertFalse(any("出力名" in i.message and i.is_error for i in grouped_issues))
+
     def test_fallback_text(self):
         # 送信テキストが空でも原文があれば TTS テキストは非空
         line = Line("1", "原文", "")

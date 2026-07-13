@@ -1,5 +1,6 @@
 """irodori_cli.build のテスト（fake TTS ランナーで infer.py 不要）。"""
 
+import json
 import os
 import sys
 import tempfile
@@ -111,6 +112,39 @@ class TestBuild(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(out, "あかね_1", "a_1.wav")))
         self.assertTrue(os.path.exists(os.path.join(out, "あかね_2", "b_1.wav")))
 
+    def test_group_by_char_uses_relative_state_keys(self):
+        sc = Scenario(
+            characters=[
+                Character("あかね", "1", "/lora/akane", "line_"),
+                Character("ゆい", "2", "/lora/yui", "line_"),
+            ],
+            lines=[
+                Line("1", "こんにちは。", "こんにちは。😊"),
+                Line("2", "おはよう。", "おはよう。☀️"),
+            ],
+        )
+        runner = FakeRunner()
+        b = Builder(self.cfg, runner)
+        res = b.build(sc, group_by_char=True)
+        self.assertEqual(res.generated, 2)
+        self.assertTrue(
+            os.path.exists(os.path.join(self.cfg.voice_out_dir, "あかね", "line_1.wav"))
+        )
+        self.assertTrue(
+            os.path.exists(os.path.join(self.cfg.voice_out_dir, "ゆい", "line_1.wav"))
+        )
+        with open(self.cfg.state_file, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        self.assertIn(os.path.join("あかね", "line_1.wav"), state)
+        self.assertIn(os.path.join("ゆい", "line_1.wav"), state)
+        self.assertNotIn("line_1.wav", state)
+
+        runner2 = FakeRunner()
+        b2 = Builder(self.cfg, runner2)
+        res2 = b2.build(sc, group_by_char=True)
+        self.assertEqual(res2.skipped, 2)
+        self.assertEqual(runner2.calls, 0)
+
     def test_empty_text_skip(self):
         sc = _scenario()
         sc.lines.append(Line("1", "", ""))
@@ -118,6 +152,22 @@ class TestBuild(unittest.TestCase):
         b = Builder(self.cfg, runner)
         res = b.build(sc)
         self.assertEqual(res.generated, 3)  # 空行は生成されない
+
+    def test_empty_text_error_is_reported_without_raising(self):
+        sc = _scenario()
+        sc.lines.append(Line("1", "", ""))
+        cfg = Config(
+            voice_out_dir=self.cfg.voice_out_dir,
+            cache_dir=self.cfg.cache_dir,
+            state_file=self.cfg.state_file,
+            on_empty_text="error",
+        )
+        runner = FakeRunner()
+        b = Builder(cfg, runner)
+        res = b.build(sc)
+        self.assertEqual(res.generated, 3)
+        self.assertEqual(res.failed, 1)
+        self.assertIn("空", res.failures[0][1])
 
     def test_preview(self):
         runner = FakeRunner()

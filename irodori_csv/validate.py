@@ -3,14 +3,28 @@
 from __future__ import annotations
 
 import os
+from collections import Counter
 from dataclasses import dataclass
 
 from .model import Scenario
-from .naming import assign_numbers
+from .naming import assign_numbers, sanitize_folder
 
 # 出力名に使えない文字（ヘッド由来。パス区切りはヘッドの一部としては非対象だが
 # ファイル名としては不正なのでチェックする）
 _INVALID_FILENAME_CHARS = set('/\\:*?"<>|')
+
+
+def _folder_map(scenario: Scenario) -> dict[str, str]:
+    """group-by-char 用に、実際の出力と同じサブフォルダ名を算出する。"""
+    bases = {c.ref: c.name if c.name.strip() else c.ref for c in scenario.characters}
+    folder_counts = Counter(sanitize_folder(base) for base in bases.values())
+    mapping: dict[str, str] = {}
+    for c in scenario.characters:
+        base = bases[c.ref]
+        if folder_counts[sanitize_folder(base)] > 1:
+            base = f"{base}_{c.ref}"
+        mapping[c.ref] = sanitize_folder(base)
+    return mapping
 
 
 @dataclass
@@ -85,16 +99,18 @@ def validate_scenario(
 
     # --- 出力名の重複・不正文字 ---
     names: dict[str, int] = {}
+    folders = _folder_map(scenario) if group_by_char else {}
     for a in assign_numbers(scenario):
         if any(ch in _INVALID_FILENAME_CHARS for ch in a.filename):
             issues.append(
                 Issue("error", f"出力名に不正な文字があります: {a.filename}", "lines")
             )
-        if a.filename in names:
+        name_key = os.path.join(folders[a.line.ref], a.filename) if folders else a.filename
+        if name_key in names:
             issues.append(
-                Issue("error", f"出力名「{a.filename}」が重複しています。", "lines")
+                Issue("error", f"出力名「{name_key}」が重複しています。", "lines")
             )
         else:
-            names[a.filename] = 1
+            names[name_key] = 1
 
     return issues

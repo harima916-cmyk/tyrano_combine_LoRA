@@ -43,16 +43,25 @@ def _save_state(path: str, state: dict[str, str]) -> None:
 def _folder_map(scenario: Scenario) -> dict[str, str]:
     """group-by-char 用に 参照番号 -> サブフォルダ名 を作る。
 
-    キャラ名が重複する場合は「キャラ名_参照番号」で分離する（SPEC §build --group-by-char）。
+    サニタイズ後のフォルダ名が重複する場合は「キャラ名_参照番号」で分離する
+    （SPEC §build --group-by-char）。
     """
-    name_counts = Counter(c.name for c in scenario.characters)
+    bases = {c.ref: c.name if c.name.strip() else c.ref for c in scenario.characters}
+    folder_counts = Counter(sanitize_folder(base) for base in bases.values())
     mapping: dict[str, str] = {}
     for c in scenario.characters:
-        base = c.name if c.name.strip() else c.ref
-        if name_counts[c.name] > 1:
+        base = bases[c.ref]
+        if folder_counts[sanitize_folder(base)] > 1:
             base = f"{base}_{c.ref}"
         mapping[c.ref] = sanitize_folder(base)
     return mapping
+
+
+def _relative_output_path(a: LineAssignment, folders: dict[str, str]) -> str:
+    """state / progress / failure 表示に使う出力相対パスを返す。"""
+    if folders:
+        return os.path.join(folders[a.line.ref], a.filename)
+    return a.filename
 
 
 @dataclass
@@ -108,50 +117,55 @@ class Builder:
         if chars is not None:
             assignments = [a for a in assignments if a.line.ref in chars]
 
+        result = BuildResult()
+
         # 空テキストの扱い
         filtered: list[LineAssignment] = []
         for a in assignments:
             if not a.line.tts_text().strip():
                 if self.config.on_empty_text == "error":
-                    raise ValueError(f"送信テキストが空です: 参照番号={a.line.ref}")
+                    result.failed += 1
+                    result.failures.append(
+                        (
+                            _relative_output_path(a, folders),
+                            f"送信テキスト・原文がともに空です: 参照番号={a.line.ref}",
+                        )
+                    )
                 continue  # skip
             filtered.append(a)
 
         state = _load_state(self.config.state_file)
-        result = BuildResult()
         total = len(filtered)
 
         for done, a in enumerate(filtered, start=1):
-            if group_by_char:
-                target = os.path.join(base_dir, folders[a.line.ref], a.filename)
-            else:
-                target = os.path.join(base_dir, a.filename)
+            rel_path = _relative_output_path(a, folders)
+            target = os.path.join(base_dir, rel_path)
 
             h = self._hash_of(a)
             up_to_date = (
                 not force
                 and os.path.exists(target)
-                and state.get(a.filename) == h
+                and state.get(rel_path) == h
             )
             if up_to_date:
                 result.skipped += 1
                 if progress:
-                    progress(done, total, a.filename, "SKIPPED")
+                    progress(done, total, rel_path, "SKIPPED")
                 continue
 
             try:
                 cache_wav = self.ensure_cached(a)
                 os.makedirs(os.path.dirname(os.path.abspath(target)), exist_ok=True)
                 shutil.copyfile(cache_wav, target)
-                state[a.filename] = h
+                state[rel_path] = h
                 result.generated += 1
                 if progress:
-                    progress(done, total, a.filename, "GENERATED")
+                    progress(done, total, rel_path, "GENERATED")
             except Exception as e:  # noqa: BLE001 - 個別行の失敗は記録して継続
                 result.failed += 1
-                result.failures.append((a.filename, str(e)))
+                result.failures.append((rel_path, str(e)))
                 if progress:
-                    progress(done, total, a.filename, "FAILED")
+                    progress(done, total, rel_path, "FAILED")
 
         _save_state(self.config.state_file, state)
         return result

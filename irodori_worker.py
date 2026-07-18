@@ -67,7 +67,18 @@ def _resolve_checkpoint_path(hf_checkpoint: str | None, checkpoint: str | None) 
 
 
 def main() -> int:
+    # Windows で日本語ログが文字化けしないよう stdout/stderr を UTF-8 に固定
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
     ap = argparse.ArgumentParser(description="Irodori-TTS 常駐生成ワーカー")
+    # irodori_tts を import できるよう、Irodori-TTS リポジトリを import パスへ追加する。
+    # （irodori_tts はリポジトリ内フォルダで、venv に pip インストールされていない前提）
+    ap.add_argument("--repo-dir", default=None,
+                    help="Irodori-TTS リポジトリのパス（irodori_tts を import するため sys.path に追加）")
     # ランタイム（起動時に1回だけ使う）
     ap.add_argument("--hf-checkpoint", default=None)
     ap.add_argument("--checkpoint", default=None)
@@ -81,6 +92,11 @@ def main() -> int:
     ap.add_argument("--seconds", type=float, default=None)
     ap.add_argument("--no-ref", action="store_true")
     args = ap.parse_args()
+
+    # irodori_tts を見つけられるよう、repo_dir（無ければ cwd）を import パス先頭へ。
+    for p in (args.repo_dir, os.getcwd()):
+        if p and os.path.isdir(p) and p not in sys.path:
+            sys.path.insert(0, os.path.abspath(p))
 
     try:
         from irodori_tts.inference_runtime import (

@@ -66,6 +66,10 @@ class WorkerRunner:
     def _startup_command(self) -> list[str]:
         ir = self.config.irodori
         cmd = shlex.split(ir.runner) + [self._script]
+        # irodori_tts を import できるよう Irodori-TTS リポジトリを渡す（sys.path に追加させる）
+        repo = self.repo_cwd()
+        if repo:
+            cmd += ["--repo-dir", repo]
         # checkpoint は SPEC 既定と同様 --hf-checkpoint 前提（ローカルなら extra 側で調整可）
         cmd += ["--hf-checkpoint", ir.checkpoint]
         if ir.device:

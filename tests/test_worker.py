@@ -31,6 +31,24 @@ FAKE_OK = textwrap.dedent("""
         sys.stdout.flush()
 """)
 
+FAKE_ECHO_LORA = textwrap.dedent("""
+    import sys, json, os
+    sys.stdout.write("@@IRODORI_READY@@\\n"); sys.stdout.flush()
+    for raw in sys.stdin:
+        line = raw.strip()
+        if not line: continue
+        if line == "@@QUIT@@": break
+        job = json.loads(line)
+        out = job["out"]
+        os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
+        # 受け取った lora パスを1行目に書き出す（送信経路の文字化け検出用）。
+        # 出力サイズ下限(128B)チェックに引っかからないようパディングを付ける。
+        with open(out, "w", encoding="utf-8") as f:
+            f.write((job.get("lora") or "") + "\\n" + "x" * 200)
+        sys.stdout.write("@@IRODORI_RESULT@@ " + json.dumps({"ok": True, "out": out}) + "\\n")
+        sys.stdout.flush()
+""")
+
 FAKE_FATAL = 'import sys\nsys.stdout.write("@@IRODORI_FATAL@@ boom\\n"); sys.stdout.flush(); sys.exit(4)\n'
 FAKE_DIE = 'import sys\nsys.exit(1)\n'
 
@@ -70,6 +88,20 @@ class TestWorkerRunner(unittest.TestCase):
         self.assertTrue(os.path.exists(out2) and os.path.getsize(out2) >= 128)
         w.close()
         self.assertIsNone(w._proc)
+
+    def test_japanese_lora_path_roundtrip(self):
+        # 日本語を含む LoRA パスが UTF-8 のままワーカーへ届く（文字化けしない）
+        script = _write(self.tmp, "fake_echo.py", FAKE_ECHO_LORA)
+        w = WorkerRunner(_cfg(self.tmp), worker_script=script)
+        w.start()
+        lora = "/lora/元データ/ダイタクヘリオス/checkpoint_best_val_loss_0002000_0.886375"
+        out = os.path.join(self.tmp, "jp.wav")
+        # 内容チェック(<128B)で落ちないよう十分長いパスにしている
+        w.infer("やあ", lora, out)
+        with open(out, encoding="utf-8") as f:
+            received = f.readline().rstrip("\n")
+        self.assertEqual(received, lora)
+        w.close()
 
     def test_job_failure_raises(self):
         script = _write(self.tmp, "fake_ok.py", FAKE_OK)

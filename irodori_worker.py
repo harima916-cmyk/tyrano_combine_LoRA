@@ -67,8 +67,9 @@ def _resolve_checkpoint_path(hf_checkpoint: str | None, checkpoint: str | None) 
 
 
 def main() -> int:
-    # Windows で日本語ログが文字化けしないよう stdout/stderr を UTF-8 に固定
-    for stream in (sys.stdout, sys.stderr):
+    # Windows で日本語（ログ・LoRAパス等）が文字化けしないよう入出力を UTF-8 に固定。
+    # 特に stdin: ジョブ JSON は UTF-8 で送られてくるので、cp932 で読むとパスが壊れる。
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, ValueError):

@@ -12,6 +12,22 @@ from irodori_csv import ParseError, read_scenario, validate_scenario
 from .build import Builder
 from .config import Config, load_config
 from .tts import InferRunner
+from .worker import WorkerError, WorkerRunner
+
+
+def _make_runner(cfg: Config, log=print):
+    """設定に応じた TTSRunner を返す。worker 起動に失敗したら subprocess にフォールバック。
+
+    返り値は (runner, close_fn)。close_fn は使い終わりに必ず呼ぶ。
+    """
+    if cfg.backend == "worker":
+        w = WorkerRunner(cfg, log_fn=lambda m: log(m))
+        try:
+            w.start()  # モデルを1回だけロード（ここで常駐開始）
+            return w, w.close
+        except WorkerError as e:
+            log(f"⚠ 常駐ワーカーを起動できませんでした（従来方式にフォールバック）: {e}")
+    return InferRunner(cfg), (lambda: None)
 
 
 def _load(args) -> Config:
@@ -89,15 +105,19 @@ def cmd_build(args) -> int:
         if args.progress:
             print(f"PROGRESS {done}/{total} {name} {status}", flush=True)
 
-    builder = Builder(cfg, InferRunner(cfg))
-    result = builder.build(
-        scenario,
-        out_dir=args.out_dir,
-        group_by_char=args.group_by_char,
-        force=args.force,
-        chars=chars,
-        progress=progress,
-    )
+    runner, close_runner = _make_runner(cfg, log=lambda m: print(m, flush=True))
+    try:
+        builder = Builder(cfg, runner)
+        result = builder.build(
+            scenario,
+            out_dir=args.out_dir,
+            group_by_char=args.group_by_char,
+            force=args.force,
+            chars=chars,
+            progress=progress,
+        )
+    finally:
+        close_runner()
 
     if args.copy_csv:
         dest_dir = args.out_dir or cfg.voice_out_dir
@@ -122,12 +142,15 @@ def cmd_preview(args) -> int:
     cfg = _load(args)
     # 既定はプロジェクト内の見える preview/ フォルダ（隠しフォルダを避ける）
     out = args.out or os.path.join(cfg.preview_dir, "preview.wav")
-    builder = Builder(cfg, InferRunner(cfg))
+    runner, close_runner = _make_runner(cfg, log=lambda m: print(m, file=sys.stderr, flush=True))
     try:
+        builder = Builder(cfg, runner)
         path = builder.preview(args.text, args.lora_dir, out)
     except Exception as e:  # noqa: BLE001
         print(f"生成エラー: {e}", file=sys.stderr)
         return 1
+    finally:
+        close_runner()
     print(path)
     return 0
 

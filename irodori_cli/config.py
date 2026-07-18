@@ -36,6 +36,10 @@ class Config:
     state_file: str = ".irodori_state.json"
     csv_encoding: str = "utf-8-sig"
     on_empty_text: str = "skip"
+    # 生成バックエンド:
+    #   "worker"     … モデルを1回だけロードして常駐（既定・高速）。infer.py 相当を内部再利用。
+    #   "subprocess" … 1行ごとに infer.py を起動（毎回モデルロード。従来動作・フォールバック用）。
+    backend: str = "worker"
     irodori: IrodoriConfig = field(default_factory=IrodoriConfig)
 
     def tts_params_signature(self) -> str:
@@ -69,6 +73,7 @@ def load_config(path: str) -> Config:
         state_file=project.get("state_file", ".irodori_state.json"),
         csv_encoding=csv_sec.get("encoding", "utf-8-sig"),
         on_empty_text=data.get("on_empty_text", "skip"),
+        backend=data.get("backend", "worker"),
         irodori=IrodoriConfig(
             repo_dir=ir.get("repo_dir", ""),
             runner=ir.get("runner", "python"),

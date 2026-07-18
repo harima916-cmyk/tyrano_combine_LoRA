@@ -15,10 +15,14 @@ csv:
 irodori:
   repo_dir:   "/path/to/Irodori-TTS"        # infer.py のあるディレクトリ（ここをカレントにして実行）
   # infer.py を「Irodori-TTS の依存が入った環境」で動かすコマンド。
-  #   例) uv 管理なら "uv run python"（初回は repo_dir で `uv sync` 済みにしておく）
+  #   例) uv 管理でGPU(CUDA)なら "uv run --extra cu128 python"
+  #       ※ --extra cu128 を付けないと uv が毎回 CPU 版 torch に同期し直し、CPUで生成されて遅くなる。
+  #       ※ CUDA 版が入っているかは repo_dir で次を確認:
+  #          uv run --extra cu128 python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+  #          → "...+cu128 True" ならGPUで生成できる。
   #   例) 専用 venv があるなら "E:/ai_voice/Irodori-TTS/Irodori-TTS/.venv/Scripts/python.exe"
   # ※ repo_dir をカレントにして実行するので、tyrano 側の .venv は使われません。
-  runner:     "uv run python"
+  runner:     "uv run --extra cu128 python"
   checkpoint: "Aratako/Irodori-TTS-500M-v3"
   num_steps:  32
   seconds:    null
@@ -29,9 +33,11 @@ irodori:
   #   none      : 何も付けない（extra_args で自前指定）
   ref_mode:   "no-ref"
   ref_path:   null
-  # 実行デバイス / 精度（null なら infer.py の既定に任せる）。GPU 明示なら "cuda"。
-  device:     null      # "cuda" | "cpu" | "cuda:0"
-  precision:  null      # "bf16" | "fp32"
+  # 実行デバイス / 精度。GPUで生成するなら "cuda"（お試し生成・一括生成の両方に効く）。
+  #   ※ runner が CUDA 版 torch を使える状態（上の --extra cu128 等）であること。
+  #   ※ GPUが無い/使わない場合だけ "cpu" にする。
+  device:     "cuda"    # "cuda" | "cpu" | "cuda:0"
+  precision:  "bf16"    # "bf16" | "fp32"（GPUなら bf16 推奨）
   extra_args: []
 
 on_empty_text: "skip" # skip | error

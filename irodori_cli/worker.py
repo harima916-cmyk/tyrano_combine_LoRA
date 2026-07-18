@@ -27,7 +27,14 @@ LogFn = Callable[[str], None]
 
 
 def _worker_script() -> str:
-    """リポジトリ直下の irodori_worker.py の絶対パス。"""
+    """常駐ワーカースクリプトの絶対パス。
+
+    環境変数 IRODORI_WORKER_SCRIPT で差し替え可能（テスト・上級者向け）。
+    既定はリポジトリ直下の irodori_worker.py。
+    """
+    override = os.environ.get("IRODORI_WORKER_SCRIPT")
+    if override:
+        return override
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(here, "irodori_worker.py")
 

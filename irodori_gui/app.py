@@ -39,6 +39,7 @@ from .delegates import (
     SendTextDelegate,
 )
 from .emoji import load_emoji_palette
+from .generation import GenerationController
 from .models import CharacterTableModel, LineTableModel
 from .textutil import qt_cursor_to_index
 
@@ -69,8 +70,14 @@ class MainWindow(QMainWindow):
         self.line_model.changed.connect(self._on_changed)
         self.char_model.changed.connect(self.line_model.refresh_all)
 
+        # 常駐ワーカー（モデルを1回だけロードして使い回す）
+        self.gen: GenerationController | None = None
+        self._use_worker: bool | None = None   # None=読込中 / True=準備完了 / False=不可（CLIへ）
+        self._worker_busy = False
+
         self._build_ui()
         self._new_file()
+        self._start_worker()  # 起動時にモデルをプリロード（設定があれば）
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self):
@@ -476,6 +483,74 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(self, "設定ファイルを選択", "", "YAML (*.yaml *.yml)")
         if path:
             self.config_path = path
+            self._start_worker()  # 新しい設定でモデルを読み込み直す
+
+    # ------------------------------------------------------- resident worker
+    def _start_worker(self) -> None:
+        """常駐ワーカーを起動しモデルをプリロードする（設定ファイルがある場合）。"""
+        if self.gen is not None:
+            self.gen.stop()
+            self.gen = None
+        self._use_worker = None
+        if not (self.config_path and os.path.exists(self.config_path)):
+            # 設定が無い場合は常駐せず、従来どおり実行時に CLI を起動する
+            self._use_worker = False
+            return
+        self.gen = GenerationController(self.config_path, self)
+        self.gen.logged.connect(self._on_gen_log)
+        self.gen.ready.connect(self._on_gen_ready)
+        self.gen.preload_failed.connect(self._on_gen_preload_failed)
+        self.gen.preview_done.connect(self._on_gen_preview_done)
+        self.gen.op_failed.connect(self._on_gen_op_failed)
+        self.gen.build_progress.connect(self._on_gen_build_progress)
+        self.gen.build_done.connect(self._on_gen_build_done)
+        self.statusBar().showMessage("モデルを読み込み中…", 0)
+        self.gen.preload()
+
+    def _on_gen_log(self, msg: str) -> None:
+        self.log.addItem(msg)
+        self.log.scrollToBottom()
+
+    def _on_gen_ready(self) -> None:
+        self._use_worker = True
+        self.statusBar().showMessage("モデル準備完了（生成は常駐モデルを使用）", 4000)
+
+    def _on_gen_preload_failed(self, msg: str) -> None:
+        self._use_worker = False
+        self.statusBar().showMessage("常駐ワーカー不可 → 従来方式で生成します", 6000)
+        self.log.addItem(f"⚠ 常駐ワーカーを使えません（従来方式で生成）: {msg}")
+
+    def _finish_worker_op(self) -> None:
+        self._worker_busy = False
+        self.gen_btn.setEnabled(True)
+
+    def _on_gen_preview_done(self, out: str) -> None:
+        self._finish_worker_op()
+        if os.path.exists(out):
+            self._play(out)
+        else:
+            QMessageBox.warning(self, "お試し生成", "生成に失敗しました。ログを確認してください。")
+
+    def _on_gen_op_failed(self, msg: str) -> None:
+        self._finish_worker_op()
+        self.log.addItem(f"✖ 生成エラー: {msg}")
+        QMessageBox.warning(self, "生成エラー", msg)
+
+    def _on_gen_build_progress(self, done: int, total: int, name: str, status: str) -> None:
+        self.progress.setMaximum(max(total, 1))
+        self.progress.setValue(done)
+        self.log.addItem(f"{done}/{total} {name} {status}")
+        self.log.scrollToBottom()
+
+    def _on_gen_build_done(self, result: dict) -> None:
+        self._finish_worker_op()
+        self.log.addItem(
+            f"完了: 生成 {result['generated']} / スキップ {result['skipped']} / 失敗 {result['failed']}"
+        )
+        for name, err in result.get("failures", []):
+            self.log.addItem(f"  ✖ {name}: {err}")
+        self.log.addItem(f"→ {result['out_dir']}")
+        self.log.scrollToBottom()
 
     # ------------------------------------------------------------- generation
     def _python(self) -> str:
@@ -492,7 +567,14 @@ class MainWindow(QMainWindow):
     def _config_args(self) -> list[str]:
         return ["--config", self.config_path] if self.config_path else []
 
+    def _worker_available(self) -> bool:
+        # 常駐ワーカーが使える（準備完了 or 読込中）。preload 失敗時のみ False。
+        return self.gen is not None and self._use_worker is not False
+
     def _run_bulk(self):
+        if self._worker_busy:
+            QMessageBox.information(self, "実行中", "別の生成処理が実行中です。")
+            return
         if self.dirty or self.current_path is None:
             if not self._save_file():
                 return
@@ -510,6 +592,22 @@ class MainWindow(QMainWindow):
         # 進捗・ログが見えるよう検証/ログタブへ切り替える
         if getattr(self, "_checks_tab_index", None) is not None:
             self.tabs.setCurrentIndex(self._checks_tab_index)
+
+        if self._worker_available():
+            # 常駐（プリロード済み）モデルで生成
+            self._worker_busy = True
+            self.gen_btn.setEnabled(False)
+            self.progress.setValue(0)
+            self.statusBar().showMessage("一括生成中…（常駐モデル）", 0)
+            self.log.addItem("$ 一括生成（常駐モデル）")
+            self.gen.build({
+                "csv_path": self.current_path,
+                "out_dir": out_dir,
+                "group_by_char": True,
+                "copy_csv": True,
+            })
+            return
+        # フォールバック: 従来どおり CLI をサブプロセス起動
         args = [
             "-m", "irodori_cli", *self._config_args(), "--csv", self.current_path,
             "build", "--out-dir", out_dir, "--copy-csv", "--group-by-char", "--progress",
@@ -520,6 +618,9 @@ class MainWindow(QMainWindow):
         self.log.addItem(f"完了 (code={code}) → {out_dir}")
 
     def _run_preview(self):
+        if self._worker_busy:
+            QMessageBox.information(self, "実行中", "別の生成処理が実行中です。")
+            return
         row = self._line_row()
         if row < 0:
             QMessageBox.information(self, "お試し生成", "生成するセリフ行を選択してください。")
@@ -531,6 +632,14 @@ class MainWindow(QMainWindow):
             return
         # 隠し temp ではなく、プロジェクト内の見える preview/ フォルダへ保存
         out = os.path.join(self._project_dir(), "preview", f"row{row + 1}.wav")
+
+        if self._worker_available():
+            self._worker_busy = True
+            self.gen_btn.setEnabled(False)
+            self.statusBar().showMessage("お試し生成中…（常駐モデル）", 0)
+            self.gen.preview(line.tts_text(), char.lora_dir, out)
+            return
+        # フォールバック: 従来どおり CLI をサブプロセス起動
         args = [
             "-m", "irodori_cli", *self._config_args(),
             "preview", "--text", line.tts_text(), "--lora-dir", char.lora_dir, "--out", out,
@@ -598,6 +707,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         if self._maybe_save():
+            if self.gen is not None:
+                self.gen.stop()  # 常駐ワーカーを終了
+                self.gen = None
             event.accept()
         else:
             event.ignore()

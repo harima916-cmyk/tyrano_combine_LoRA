@@ -80,6 +80,8 @@ class WorkerRunner:
             cmd += ["--num-steps", str(ir.num_steps)]
         if ir.seconds is not None:
             cmd += ["--seconds", str(ir.seconds)]
+        if ir.cfg_scale_caption is not None:
+            cmd += ["--cfg-scale-caption", str(ir.cfg_scale_caption)]
         mode = (ir.ref_mode or "none").strip()
         if mode == "no-ref":
             cmd += ["--no-ref"]
@@ -150,7 +152,7 @@ class WorkerRunner:
         return self._proc is not None and self._proc.poll() is None
 
     # --- 生成（TTSRunner 互換）---
-    def infer(self, text: str, lora_dir: str, out_wav: str) -> None:
+    def infer(self, text: str, lora_dir: str, out_wav: str, caption: str = "") -> None:
         out_wav = os.path.abspath(out_wav)
         with self._lock:
             if not self._is_alive():
@@ -166,6 +168,8 @@ class WorkerRunner:
             assert proc is not None and proc.stdin is not None and proc.stdout is not None
 
             job = {"text": text, "lora": lora_dir or None, "out": out_wav}
+            if caption and caption.strip():
+                job["caption"] = caption.strip()
             proc.stdin.write(json.dumps(job, ensure_ascii=False) + "\n")
             proc.stdin.flush()
 

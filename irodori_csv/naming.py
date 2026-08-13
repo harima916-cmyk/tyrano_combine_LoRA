@@ -10,7 +10,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 
-from .model import Character, Line, Scenario
+from .model import Character, Line, Scenario, effective_caption
 
 # OS で使えない文字（サブフォルダ名などのサニタイズ用）
 _INVALID_CHARS = re.compile(r'[/\\:*?"<>|]')
@@ -64,6 +64,10 @@ class LineAssignment:
     character: Character
     seq: int            # キャラ内連番（1 始まり）
     filename: str       # 出力ファイル名（ヘッド + 連番 + .wav）
+
+    def caption(self) -> str:
+        """この行に適用するキャプション（行優先・キャラ既定へフォールバック）。"""
+        return effective_caption(self.line, self.character)
 
 
 def assign_numbers(scenario: Scenario) -> list[LineAssignment]:

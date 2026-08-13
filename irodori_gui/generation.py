@@ -55,12 +55,12 @@ class _GenWorker(QObject):
             self._runner = None
             self.preload_failed.emit(str(e))
 
-    @Slot(str, str, str)
-    def run_preview(self, text: str, lora: str, out: str) -> None:
+    @Slot(str, str, str, str)
+    def run_preview(self, text: str, lora: str, out: str, caption: str) -> None:
         try:
             self._ensure()
             assert self._runner is not None
-            self._runner.infer(text, lora, out)
+            self._runner.infer(text, lora, out, caption=caption)
             self.preview_done.emit(out)
         except Exception as e:  # noqa: BLE001
             self.op_failed.emit(str(e))
@@ -105,7 +105,7 @@ class GenerationController(QObject):
     """メインスレッド側の窓口。リクエストを signal 経由でワーカースレッドへ渡す。"""
 
     _req_preload = Signal()
-    _req_preview = Signal(str, str, str)
+    _req_preview = Signal(str, str, str, str)
     _req_build = Signal(object)
 
     def __init__(self, config_path: str | None, parent: QObject | None = None):
@@ -134,8 +134,8 @@ class GenerationController(QObject):
     def preload(self) -> None:
         self._req_preload.emit()
 
-    def preview(self, text: str, lora: str, out: str) -> None:
-        self._req_preview.emit(text, lora, out)
+    def preview(self, text: str, lora: str, out: str, caption: str = "") -> None:
+        self._req_preview.emit(text, lora, out, caption)
 
     def build(self, payload: dict) -> None:
         self._req_build.emit(payload)

@@ -103,6 +103,17 @@ class TestWorkerRunner(unittest.TestCase):
         self.assertEqual(received, lora)
         w.close()
 
+    def test_caption_sent_in_job(self):
+        # caption 付き infer で job に caption が入る
+        script = _write(self.tmp, "fake_echo.py", FAKE_ECHO_LORA.replace('job.get("lora")', 'job.get("caption")'))
+        w = WorkerRunner(_cfg(self.tmp), worker_script=script)
+        w.start()
+        out = os.path.join(self.tmp, "cap.wav")
+        w.infer("やあ", "/lora/x", out, caption="深く傷つき弱々しく話す")
+        with open(out, encoding="utf-8") as f:
+            self.assertEqual(f.readline().rstrip("\n"), "深く傷つき弱々しく話す")
+        w.close()
+
     def test_job_failure_raises(self):
         script = _write(self.tmp, "fake_ok.py", FAKE_OK)
         w = WorkerRunner(_cfg(self.tmp), worker_script=script)

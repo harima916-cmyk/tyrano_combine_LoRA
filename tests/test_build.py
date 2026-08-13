@@ -17,9 +17,11 @@ class FakeRunner:
 
     def __init__(self):
         self.calls = 0
+        self.captions: list[str] = []
 
-    def infer(self, text, lora_dir, out_wav):
+    def infer(self, text, lora_dir, out_wav, caption=""):
         self.calls += 1
+        self.captions.append(caption)
         os.makedirs(os.path.dirname(os.path.abspath(out_wav)), exist_ok=True)
         with open(out_wav, "wb") as f:
             f.write(b"RIFFfake-wav-" + text.encode("utf-8"))

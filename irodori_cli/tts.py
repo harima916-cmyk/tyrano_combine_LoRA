@@ -14,8 +14,11 @@ from .config import Config
 
 
 class TTSRunner(Protocol):
-    def infer(self, text: str, lora_dir: str, out_wav: str) -> None:
-        """text を lora_dir の LoRA で音声化し out_wav（.wav）へ書き出す。失敗時は例外。"""
+    def infer(self, text: str, lora_dir: str, out_wav: str, caption: str = "") -> None:
+        """text を lora_dir の LoRA で音声化し out_wav（.wav）へ書き出す。失敗時は例外。
+
+        caption: v4 の声質・感情の自由文指定（空なら無指定）。
+        """
         ...
 
 
@@ -33,7 +36,7 @@ class InferRunner:
         """
         return os.path.abspath(self.config.irodori.repo_dir) if self.config.irodori.repo_dir else None
 
-    def build_command(self, text: str, lora_dir: str, out_wav: str) -> list[str]:
+    def build_command(self, text: str, lora_dir: str, out_wav: str, caption: str = "") -> list[str]:
         ir = self.config.irodori
         # cwd を repo_dir にするため、infer.py と出力先は絶対パスに固定する。
         infer_py = os.path.abspath(os.path.join(ir.repo_dir, "infer.py")) if ir.repo_dir else "infer.py"
@@ -44,6 +47,11 @@ class InferRunner:
             "--lora-adapter", os.path.abspath(lora_dir) if lora_dir else lora_dir,
             "--output-wav", os.path.abspath(out_wav),
         ]
+        # v4: キャプション（声質・感情の自由文）
+        if caption and caption.strip():
+            cmd += ["--caption", caption.strip()]
+            if ir.cfg_scale_caption is not None:
+                cmd += ["--cfg-scale-caption", str(ir.cfg_scale_caption)]
         # 話者の与え方（話者条件付き checkpoint は必須。LoRA 運用は通常 --no-ref）
         mode = (ir.ref_mode or "none").strip()
         if mode == "no-ref":
@@ -62,10 +70,10 @@ class InferRunner:
         cmd += list(ir.extra_args)
         return cmd
 
-    def infer(self, text: str, lora_dir: str, out_wav: str) -> None:
+    def infer(self, text: str, lora_dir: str, out_wav: str, caption: str = "") -> None:
         out_wav = os.path.abspath(out_wav)
         os.makedirs(os.path.dirname(out_wav), exist_ok=True)
-        cmd = self.build_command(text, lora_dir, out_wav)
+        cmd = self.build_command(text, lora_dir, out_wav, caption)
         proc = subprocess.run(
             cmd,
             capture_output=True,

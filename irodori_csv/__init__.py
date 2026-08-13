@@ -6,7 +6,7 @@
 - validate: SPEC §4.6 の検証ルール
 """
 
-from .model import Character, Line, Scenario
+from .model import Character, Line, Scenario, effective_caption
 from .naming import (
     output_name,
     assign_numbers,
@@ -22,6 +22,7 @@ __all__ = [
     "Character",
     "Line",
     "Scenario",
+    "effective_caption",
     "output_name",
     "assign_numbers",
     "LineAssignment",

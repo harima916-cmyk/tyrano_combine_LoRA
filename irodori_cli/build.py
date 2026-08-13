@@ -16,9 +16,9 @@ from .config import Config
 from .tts import TTSRunner
 
 
-def line_hash(send_text: str, ref: str, lora_dir: str, tts_params: str) -> str:
-    """キャッシュ鍵（SPEC §6.2）。"""
-    payload = "\x00".join([send_text, ref, lora_dir, tts_params])
+def line_hash(send_text: str, ref: str, lora_dir: str, tts_params: str, caption: str = "") -> str:
+    """キャッシュ鍵（SPEC §6.2）。キャプションも音声に影響するので鍵に含める。"""
+    payload = "\x00".join([send_text, ref, lora_dir, tts_params, caption])
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -66,16 +66,18 @@ class Builder:
         force=True のときはキャッシュがあっても infer を再実行して作り直す。
         """
         text = assignment.line.tts_text()
-        h = line_hash(text, assignment.line.ref, assignment.character.lora_dir, self.tts_params)
+        caption = assignment.caption()
+        h = line_hash(text, assignment.line.ref, assignment.character.lora_dir,
+                      self.tts_params, caption)
         cache_wav = self._cache_path(h)
         if force or not os.path.exists(cache_wav):
             os.makedirs(self.config.cache_dir, exist_ok=True)
-            self.runner.infer(text, assignment.character.lora_dir, cache_wav)
+            self.runner.infer(text, assignment.character.lora_dir, cache_wav, caption=caption)
         return cache_wav
 
     def _hash_of(self, a: LineAssignment) -> str:
         return line_hash(
-            a.line.tts_text(), a.line.ref, a.character.lora_dir, self.tts_params
+            a.line.tts_text(), a.line.ref, a.character.lora_dir, self.tts_params, a.caption()
         )
 
     def build(
@@ -149,13 +151,13 @@ class Builder:
         _save_state(self.config.state_file, state)
         return result
 
-    def preview(self, text: str, lora_dir: str, out_wav: str) -> str:
+    def preview(self, text: str, lora_dir: str, out_wav: str, caption: str = "") -> str:
         """CSV/state を介さず 1 件生成（キャッシュは共有）。SPEC preview。"""
-        h = line_hash(text, "", lora_dir, self.tts_params)
+        h = line_hash(text, "", lora_dir, self.tts_params, caption)
         cache_wav = self._cache_path(h)
         if not os.path.exists(cache_wav):
             os.makedirs(self.config.cache_dir, exist_ok=True)
-            self.runner.infer(text, lora_dir, cache_wav)
+            self.runner.infer(text, lora_dir, cache_wav, caption=caption)
         os.makedirs(os.path.dirname(os.path.abspath(out_wav)), exist_ok=True)
         shutil.copyfile(cache_wav, out_wav)
         return out_wav

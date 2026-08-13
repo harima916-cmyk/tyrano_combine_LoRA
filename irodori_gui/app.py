@@ -30,7 +30,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from irodori_csv import ParseError, Scenario, read_scenario, validate_scenario, write_scenario
+from irodori_csv import (
+    ParseError,
+    Scenario,
+    effective_caption,
+    read_scenario,
+    validate_scenario,
+    write_scenario,
+)
 
 from .delegates import (
     CharacterComboDelegate,
@@ -163,8 +170,9 @@ class MainWindow(QMainWindow):
         self.line_view.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.line_view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.line_view.horizontalHeader().setStretchLastSection(True)
-        self.line_view.setColumnWidth(LineTableModel.COL_TEXT, 300)
-        self.line_view.setColumnWidth(LineTableModel.COL_SEND, 320)
+        self.line_view.setColumnWidth(LineTableModel.COL_TEXT, 260)
+        self.line_view.setColumnWidth(LineTableModel.COL_SEND, 280)
+        self.line_view.setColumnWidth(LineTableModel.COL_CAPTION, 220)
         lb.addWidget(self.line_view)
         lrow = QHBoxLayout()
         lrow.addWidget(QPushButton("＋ 行追加", clicked=self.line_model.add_row))
@@ -632,18 +640,21 @@ class MainWindow(QMainWindow):
             return
         # 隠し temp ではなく、プロジェクト内の見える preview/ フォルダへ保存
         out = os.path.join(self._project_dir(), "preview", f"row{row + 1}.wav")
+        caption = effective_caption(line, char)  # v4: 行→キャラ既定の順で解決
 
         if self._worker_available():
             self._worker_busy = True
             self.gen_btn.setEnabled(False)
             self.statusBar().showMessage("お試し生成中…（常駐モデル）", 0)
-            self.gen.preview(line.tts_text(), char.lora_dir, out)
+            self.gen.preview(line.tts_text(), char.lora_dir, out, caption)
             return
         # フォールバック: 従来どおり CLI をサブプロセス起動
         args = [
             "-m", "irodori_cli", *self._config_args(),
             "preview", "--text", line.tts_text(), "--lora-dir", char.lora_dir, "--out", out,
         ]
+        if caption:
+            args += ["--caption", caption]
         self._start_process(args, on_done=lambda code: self._preview_done(code, out))
 
     def _preview_done(self, code: int, out: str):

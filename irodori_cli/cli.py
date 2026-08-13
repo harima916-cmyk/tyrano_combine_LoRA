@@ -145,7 +145,7 @@ def cmd_preview(args) -> int:
     runner, close_runner = _make_runner(cfg, log=lambda m: print(m, file=sys.stderr, flush=True))
     try:
         builder = Builder(cfg, runner)
-        path = builder.preview(args.text, args.lora_dir, out)
+        path = builder.preview(args.text, args.lora_dir, out, caption=args.caption or "")
     except Exception as e:  # noqa: BLE001
         print(f"生成エラー: {e}", file=sys.stderr)
         return 1
@@ -190,6 +190,7 @@ def build_parser() -> argparse.ArgumentParser:
     pp = sub.add_parser("preview", help="1 行だけお試し生成")
     pp.add_argument("--text", required=True)
     pp.add_argument("--lora-dir", required=True)
+    pp.add_argument("--caption", default=None, help="v4: 声質・感情の自由文（任意）")
     pp.add_argument("--out", default=None)
     pp.set_defaults(func=cmd_preview)
 

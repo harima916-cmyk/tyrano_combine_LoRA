@@ -13,9 +13,12 @@ import yaml
 class IrodoriConfig:
     repo_dir: str = ""
     runner: str = "python"
-    checkpoint: str = "Aratako/Irodori-TTS-500M-v3"
+    # v4: キャプション（声質・感情の自由文指定）対応の統合モデル
+    checkpoint: str = "Aratako/Irodori-TTS-v4.1-Small"
     num_steps: int | None = 32
     seconds: float | None = None
+    # v4: キャプションの効き具合（未指定なら infer 側の既定 3.0）。
+    cfg_scale_caption: float | None = None
     # 話者の与え方（話者条件付き checkpoint は必須）。LoRA 運用は通常 "no-ref"。
     #   no-ref | ref-wav | ref-embed | ref-latent | none
     ref_mode: str = "no-ref"
@@ -48,6 +51,7 @@ class Config:
             self.irodori.checkpoint,
             f"steps={self.irodori.num_steps}",
             f"seconds={self.irodori.seconds}",
+            f"cfgcap={self.irodori.cfg_scale_caption}",
             "args=" + " ".join(self.irodori.extra_args),
         ]
         return "\x1f".join(parts)
@@ -77,9 +81,10 @@ def load_config(path: str) -> Config:
         irodori=IrodoriConfig(
             repo_dir=ir.get("repo_dir", ""),
             runner=ir.get("runner", "python"),
-            checkpoint=ir.get("checkpoint", "Aratako/Irodori-TTS-500M-v3"),
+            checkpoint=ir.get("checkpoint", "Aratako/Irodori-TTS-v4.1-Small"),
             num_steps=ir.get("num_steps", 32),
             seconds=ir.get("seconds", None),
+            cfg_scale_caption=ir.get("cfg_scale_caption", None),
             ref_mode=ir.get("ref_mode", "no-ref"),
             ref_path=ir.get("ref_path", None),
             device=ir.get("device", "cuda"),

@@ -91,6 +91,7 @@ def main() -> int:
     # 生成の既定（ジョブ側で上書き可）
     ap.add_argument("--num-steps", type=int, default=32)
     ap.add_argument("--seconds", type=float, default=None)
+    ap.add_argument("--cfg-scale-caption", type=float, default=None)
     ap.add_argument("--no-ref", action="store_true")
     args = ap.parse_args()
 
@@ -141,6 +142,7 @@ def main() -> int:
     default_num_steps = int(args.num_steps)
     default_seconds = args.seconds
     default_no_ref = bool(args.no_ref)
+    default_cfg_caption = args.cfg_scale_caption
 
     for raw in sys.stdin:
         line = raw.strip()
@@ -161,14 +163,22 @@ def main() -> int:
             num_steps = int(job.get("num_steps", default_num_steps))
             seconds = job.get("seconds", default_seconds)
             no_ref = bool(job.get("no_ref", default_no_ref))
+            caption = job.get("caption")
+            cfg_caption = job.get("cfg_scale_caption", default_cfg_caption)
 
-            req = SamplingRequest(
+            kwargs = dict(
                 text=text,
                 no_ref=no_ref,
                 num_steps=num_steps,
                 seconds=None if seconds is None else float(seconds),
                 lora_adapter=None if not lora else str(lora),
             )
+            # v4: キャプション（声質・感情の自由文）。空なら渡さない＝無指定。
+            if caption and str(caption).strip():
+                kwargs["caption"] = str(caption).strip()
+                if cfg_caption is not None:
+                    kwargs["cfg_scale_caption"] = float(cfg_caption)
+            req = SamplingRequest(**kwargs)
             result = runtime.synthesize(req)
             os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
             saved = save_wav(out_path, result.audio, result.sample_rate)

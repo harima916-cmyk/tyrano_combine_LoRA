@@ -13,9 +13,20 @@ import yaml
 class IrodoriConfig:
     repo_dir: str = ""
     runner: str = "python"
-    checkpoint: str = "Aratako/Irodori-TTS-500M-v3"
+    # v4: キャプション（声質・感情の自由文指定）対応の統合モデル
+    checkpoint: str = "Aratako/Irodori-TTS-v4.1-Small"
     num_steps: int | None = 32
     seconds: float | None = None
+    # v4: キャプションの効き具合（未指定なら infer 側の既定 3.0）。
+    cfg_scale_caption: float | None = None
+    # 話者の与え方（話者条件付き checkpoint は必須）。LoRA 運用は通常 "no-ref"。
+    #   no-ref | ref-wav | ref-embed | ref-latent | none
+    ref_mode: str = "no-ref"
+    ref_path: str | None = None  # ref-wav/embed/latent のとき渡すファイル
+    # 実行デバイス / 精度。既定は GPU("cuda")。CPUで動かすときだけ "cpu" にする。
+    # （お試し生成・一括生成はどちらもこの設定を共有する）
+    device: str | None = "cuda"    # "cuda" | "cpu" | "cuda:0" 等
+    precision: str | None = "bf16" # "bf16" | "fp32"
     extra_args: list[str] = field(default_factory=list)
 
 
@@ -23,10 +34,15 @@ class IrodoriConfig:
 class Config:
     csv_file: str = "scenario.csv"
     voice_out_dir: str = "voices"
+    preview_dir: str = "preview"
     cache_dir: str = ".irodori_cache"
     state_file: str = ".irodori_state.json"
     csv_encoding: str = "utf-8-sig"
     on_empty_text: str = "skip"
+    # 生成バックエンド:
+    #   "worker"     … モデルを1回だけロードして常駐（既定・高速）。infer.py 相当を内部再利用。
+    #   "subprocess" … 1行ごとに infer.py を起動（毎回モデルロード。従来動作・フォールバック用）。
+    backend: str = "worker"
     irodori: IrodoriConfig = field(default_factory=IrodoriConfig)
 
     def tts_params_signature(self) -> str:
@@ -35,6 +51,7 @@ class Config:
             self.irodori.checkpoint,
             f"steps={self.irodori.num_steps}",
             f"seconds={self.irodori.seconds}",
+            f"cfgcap={self.irodori.cfg_scale_caption}",
             "args=" + " ".join(self.irodori.extra_args),
         ]
         return "\x1f".join(parts)
@@ -55,16 +72,23 @@ def load_config(path: str) -> Config:
     return Config(
         csv_file=project.get("csv_file", "scenario.csv"),
         voice_out_dir=project.get("voice_out_dir", "voices"),
+        preview_dir=project.get("preview_dir", "preview"),
         cache_dir=project.get("cache_dir", ".irodori_cache"),
         state_file=project.get("state_file", ".irodori_state.json"),
         csv_encoding=csv_sec.get("encoding", "utf-8-sig"),
         on_empty_text=data.get("on_empty_text", "skip"),
+        backend=data.get("backend", "worker"),
         irodori=IrodoriConfig(
             repo_dir=ir.get("repo_dir", ""),
             runner=ir.get("runner", "python"),
-            checkpoint=ir.get("checkpoint", "Aratako/Irodori-TTS-500M-v3"),
+            checkpoint=ir.get("checkpoint", "Aratako/Irodori-TTS-v4.1-Small"),
             num_steps=ir.get("num_steps", 32),
             seconds=ir.get("seconds", None),
+            cfg_scale_caption=ir.get("cfg_scale_caption", None),
+            ref_mode=ir.get("ref_mode", "no-ref"),
+            ref_path=ir.get("ref_path", None),
+            device=ir.get("device", "cuda"),
+            precision=ir.get("precision", "bf16"),
             extra_args=list(extra),
         ),
     )

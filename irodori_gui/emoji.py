@@ -1,4 +1,8 @@
-"""emoji_palette.tsv の読み込み（GUI_SPEC 付録 B）。"""
+"""emoji_palette.tsv の読み込み（GUI_SPEC 付録 B）。
+
+TSV 列: emoji / meaning_ja / meaning_en / category / example
+（category / example は無くても動作する）
+"""
 
 from __future__ import annotations
 
@@ -11,6 +15,8 @@ class EmojiEntry:
     emoji: str
     meaning_ja: str
     meaning_en: str
+    category: str = ""
+    example: str = ""
 
 
 def _default_path() -> str:
@@ -35,6 +41,8 @@ def load_emoji_palette(path: str | None = None) -> list[EmojiEntry]:
         emoji = cols[0] if len(cols) > 0 else ""
         ja = cols[1] if len(cols) > 1 else ""
         en = cols[2] if len(cols) > 2 else ""
+        category = cols[3] if len(cols) > 3 else ""
+        example = cols[4] if len(cols) > 4 else ""
         if emoji:
-            entries.append(EmojiEntry(emoji, ja, en))
+            entries.append(EmojiEntry(emoji, ja, en, category, example))
     return entries

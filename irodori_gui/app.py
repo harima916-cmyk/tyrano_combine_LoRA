@@ -4,33 +4,51 @@ from __future__ import annotations
 
 import os
 import sys
-import tempfile
 
 from PySide6.QtCore import QProcess, Qt
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QListWidget,
     QMainWindow,
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSplitter,
     QTableView,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from irodori_csv import ParseError, Scenario, read_scenario, validate_scenario, write_scenario
+from irodori_csv import (
+    ParseError,
+    Scenario,
+    effective_caption,
+    read_scenario,
+    validate_scenario,
+    write_scenario,
+)
 
-from .delegates import CharacterComboDelegate, LoraFolderDelegate
+from .delegates import (
+    CharacterComboDelegate,
+    EditorTrackingDelegate,
+    LoraFolderDelegate,
+    SendTextDelegate,
+)
 from .emoji import load_emoji_palette
+from .generation import GenerationController
 from .models import CharacterTableModel, LineTableModel
+from .textutil import qt_cursor_to_index
 
 ENCODINGS = ["utf-8-sig", "utf-8", "cp932"]
 
@@ -47,6 +65,11 @@ class MainWindow(QMainWindow):
         self._proc: QProcess | None = None
         self._player = None
         self._audio_out = None
+        self._active_send_editor = None       # 編集中の送信テキスト QLineEdit（ライブ挿入用）
+        self._active_text_editor = None       # 編集中の原文 QLineEdit（消失防止の確定用）
+        self._send_edit_row: int | None = None     # 編集中の行（エディタの行）
+        self._send_cursor_row: int | None = None   # 最後にカーソルがあった行
+        self._send_cursor_pos: int | None = None   # 最後にカーソルがあった位置（コードポイント index）
 
         self.char_model = CharacterTableModel()
         self.line_model = LineTableModel(self.char_model)
@@ -54,20 +77,34 @@ class MainWindow(QMainWindow):
         self.line_model.changed.connect(self._on_changed)
         self.char_model.changed.connect(self.line_model.refresh_all)
 
+        # 常駐ワーカー（モデルを1回だけロードして使い回す）
+        self.gen: GenerationController | None = None
+        self._use_worker: bool | None = None   # None=読込中 / True=準備完了 / False=不可（CLIへ）
+        self._worker_busy = False
+
         self._build_ui()
         self._new_file()
+        self._start_worker()  # 起動時にモデルをプリロード（設定があれば）
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self):
         central = QWidget()
         root = QVBoxLayout(central)
 
-        # ツールバー
+        # ツールバー（ショートカット付き）
         tb = self.addToolBar("main")
-        tb.addAction(QAction("新規", self, triggered=self._new_file))
-        tb.addAction(QAction("開く", self, triggered=self._open_file))
-        tb.addAction(QAction("保存", self, triggered=self._save_file))
-        tb.addAction(QAction("名前を付けて保存", self, triggered=self._save_as))
+        act_new = QAction("新規", self, triggered=self._new_file)
+        act_new.setShortcut(QKeySequence.StandardKey.New)          # Ctrl+N
+        act_open = QAction("開く", self, triggered=self._open_file)
+        act_open.setShortcut(QKeySequence.StandardKey.Open)        # Ctrl+O
+        act_save = QAction("保存", self, triggered=self._save_file)
+        act_save.setShortcut(QKeySequence.StandardKey.Save)        # Ctrl+S
+        act_save_as = QAction("名前を付けて保存", self, triggered=self._save_as)
+        act_save_as.setShortcut(QKeySequence.StandardKey.SaveAs)   # Ctrl+Shift+S
+        for a in (act_new, act_open, act_save, act_save_as):
+            a.setShortcutContext(Qt.ApplicationShortcut)
+            self.addAction(a)  # ツールバー非表示時もショートカットが効くように
+            tb.addAction(a)
         tb.addSeparator()
         tb.addWidget(QLabel(" 文字コード: "))
         self.enc_combo = QComboBox()
@@ -79,12 +116,25 @@ class MainWindow(QMainWindow):
         self.gen_btn.clicked.connect(self._run_bulk)
         tb.addWidget(self.gen_btn)
 
-        # キャラクター定義
-        char_box = QGroupBox("キャラクター定義")
-        cb = QVBoxLayout(char_box)
+        # メイン: タブ構成（セリフを主役に、定義・検証/ログは別タブ）
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self._build_lines_tab(), "セリフ")
+        self.tabs.addTab(self._build_chars_tab(), "キャラクター定義")
+        self._checks_tab_index = self.tabs.addTab(self._build_checks_tab(), "検証 / 生成ログ")
+        root.addWidget(self.tabs)
+
+        self.setCentralWidget(central)
+
+    # --------------------------------------------------------------- tabs
+    def _build_chars_tab(self) -> QWidget:
+        w = QWidget()
+        cb = QVBoxLayout(w)
         self.char_view = QTableView()
         self.char_view.setModel(self.char_model)
         self.char_view.setItemDelegateForColumn(2, LoraFolderDelegate(self.char_view))
+        self.char_view.setWordWrap(True)
+        self.char_view.setTextElideMode(Qt.ElideNone)
+        self.char_view.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.char_view.horizontalHeader().setStretchLastSection(True)
         cb.addWidget(self.char_view)
         crow = QHBoxLayout()
@@ -92,20 +142,37 @@ class MainWindow(QMainWindow):
         crow.addWidget(QPushButton("－ 削除", clicked=self._remove_char))
         crow.addStretch()
         cb.addLayout(crow)
-        root.addWidget(char_box)
+        return w
 
-        # セリフ
-        line_box = QGroupBox("セリフ")
-        lb = QVBoxLayout(line_box)
+    def _build_lines_tab(self) -> QWidget:
+        # 横スプリッタ: 左=セリフ表(主役, 可変) / 右=絵文字パレット
+        splitter = QSplitter(Qt.Horizontal)
+
+        top = QWidget()
+        lb = QVBoxLayout(top)
+        lb.setContentsMargins(0, 0, 0, 0)
         self.line_view = QTableView()
         self.line_view.setModel(self.line_model)
         self.line_view.setItemDelegateForColumn(
             LineTableModel.COL_CHAR, CharacterComboDelegate(self.char_model, self.line_view)
         )
+        self.line_view.setItemDelegateForColumn(
+            LineTableModel.COL_SEND,
+            SendTextDelegate(self._set_send_editor, self._remember_send_cursor, self.line_view),
+        )
+        self.line_view.setItemDelegateForColumn(
+            LineTableModel.COL_TEXT,
+            EditorTrackingDelegate(self._set_text_editor, self.line_view),
+        )
         self.line_view.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.line_view.setWordWrap(True)
+        self.line_view.setTextElideMode(Qt.ElideNone)
+        self.line_view.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.line_view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.line_view.horizontalHeader().setStretchLastSection(True)
-        self.line_view.setColumnWidth(LineTableModel.COL_TEXT, 240)
-        self.line_view.setColumnWidth(LineTableModel.COL_SEND, 260)
+        self.line_view.setColumnWidth(LineTableModel.COL_TEXT, 260)
+        self.line_view.setColumnWidth(LineTableModel.COL_SEND, 280)
+        self.line_view.setColumnWidth(LineTableModel.COL_CAPTION, 220)
         lb.addWidget(self.line_view)
         lrow = QHBoxLayout()
         lrow.addWidget(QPushButton("＋ 行追加", clicked=self.line_model.add_row))
@@ -115,49 +182,102 @@ class MainWindow(QMainWindow):
         lrow.addWidget(QPushButton("削除", clicked=lambda: self.line_model.remove_row(self._line_row())))
         lrow.addWidget(QPushButton("原文で上書き(再リンク)", clicked=lambda: self.line_model.relink(self._line_row())))
         lrow.addStretch()
-        lrow.addWidget(QPushButton("🔊 お試し生成", clicked=self._run_preview))
+        preview_btn = QPushButton("🔊 お試し生成", clicked=self._run_preview)
+        preview_btn.setProperty("accent", True)  # 淡アクセント（テーマの QPushButton[accent=true]）
+        lrow.addWidget(preview_btn)
         lb.addLayout(lrow)
-        root.addWidget(line_box)
+        splitter.addWidget(top)
 
-        # 絵文字パレット
-        emoji_box = QGroupBox("絵文字パレット（クリックで選択行の送信テキストへ挿入）")
-        eb = QHBoxLayout(emoji_box)
-        eb.setSpacing(2)
-        wrap = QWidget()
-        wrap_layout = QHBoxLayout(wrap)
-        wrap_layout.setContentsMargins(0, 0, 0, 0)
-        for e in load_emoji_palette():
-            btn = QToolButton()
-            btn.setText(e.emoji)
-            btn.setToolTip(f"{e.meaning_ja}\n{e.meaning_en}")
-            btn.clicked.connect(lambda _=False, em=e.emoji: self._insert_emoji(em))
-            wrap_layout.addWidget(btn)
-        wrap_layout.addStretch()
-        from PySide6.QtWidgets import QScrollArea
+        splitter.addWidget(self._build_emoji_panel(cols=1))
+        splitter.setStretchFactor(0, 5)   # セリフ表を優先的に広く
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([900, 210])
+        return splitter
 
+    def _build_emoji_panel(self, cols: int = 1) -> QWidget:
+        box = QGroupBox("絵文字パレット（送信テキスト編集中はカーソル位置へ／未編集は末尾へ挿入）")
+        box.setFocusPolicy(Qt.NoFocus)
+        outer = QVBoxLayout(box)
+        outer.setContentsMargins(4, 4, 4, 4)
         scroll = QScrollArea()
+        scroll.setFocusPolicy(Qt.NoFocus)
+        scroll.viewport().setFocusPolicy(Qt.NoFocus)
         scroll.setWidgetResizable(True)
-        scroll.setWidget(wrap)
-        scroll.setFixedHeight(56)
-        eb.addWidget(scroll)
-        root.addWidget(emoji_box)
+        grid_w = QWidget()
+        grid_w.setObjectName("emojiGrid")  # QSS の透過背景ルール対象
+        grid_w.setFocusPolicy(Qt.NoFocus)
+        vbox = QVBoxLayout(grid_w)
+        vbox.setContentsMargins(1, 1, 1, 1)
+        vbox.setSpacing(1)
+        # カテゴリ別に見出しを挟んで縦に並べる（効果の分類ごとにグルーピング）
+        current_cat = None
+        for e in load_emoji_palette():
+            if e.category and e.category != current_cat:
+                current_cat = e.category
+                hdr = QLabel(f"― {e.category} ―")
+                hdr.setObjectName("emojiCategory")
+                hdr.setFocusPolicy(Qt.NoFocus)
+                vbox.addWidget(hdr)
+            btn = QToolButton()
+            btn.setText(f"{e.emoji}  {e.meaning_ja}")
+            tip = e.meaning_en
+            if e.example:
+                tip = f"{e.meaning_en}\n入力例: {e.example}"
+            btn.setToolTip(tip)
+            btn.setFocusPolicy(Qt.NoFocus)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            # テーマ(QGroupBox QToolButton)に見た目を委ねる（インラインstyleは付けない）
+            vbox.addWidget(btn)
+            btn.clicked.connect(lambda _=False, em=e.emoji: self._insert_emoji(em))
+        vbox.addStretch()
+        scroll.setWidget(grid_w)
+        outer.addWidget(scroll)
+        return box
 
-        # 検証
-        val_box = QGroupBox("検証")
-        vb = QVBoxLayout(val_box)
+    def _build_checks_tab(self) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.addWidget(QLabel("検証"))
         self.val_list = QListWidget()
-        self.val_list.setFixedHeight(90)
-        vb.addWidget(self.val_list)
-        root.addWidget(val_box)
-
-        # 進捗 / ログ
+        v.addWidget(self.val_list, 1)
         self.progress = QProgressBar()
-        root.addWidget(self.progress)
+        v.addWidget(self.progress)
+        log_head = QHBoxLayout()
+        log_head.addWidget(QLabel("生成ログ"))
+        log_head.addStretch()
+        log_head.addWidget(QPushButton("ログをコピー", clicked=self._copy_log))
+        log_head.addWidget(QPushButton("ログを保存…", clicked=self._save_log))
+        log_head.addWidget(QPushButton("クリア", clicked=lambda: self.log.clear()))
+        v.addLayout(log_head)
         self.log = QListWidget()
-        self.log.setFixedHeight(90)
-        root.addWidget(self.log)
+        self.log.setSelectionMode(QListWidget.ExtendedSelection)
+        v.addWidget(self.log, 1)
+        return w
 
-        self.setCentralWidget(central)
+    # ------------------------------------------------------------- log utils
+    def _log_text(self) -> str:
+        return "\n".join(self.log.item(i).text() for i in range(self.log.count()))
+
+    def _copy_log(self):
+        from PySide6.QtWidgets import QApplication
+
+        QApplication.clipboard().setText(self._log_text())
+        self.statusBar().showMessage("ログをクリップボードにコピーしました。", 3000)
+
+    def _save_log(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "ログを保存", os.path.join(self._project_dir(), "irodori_log.txt"),
+            "テキスト (*.txt)",
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self._log_text() + "\n")
+        except OSError as e:
+            QMessageBox.critical(self, "保存エラー", str(e))
+            return
+        self.statusBar().showMessage(f"ログを保存しました: {path}", 5000)
 
     # ------------------------------------------------------------- helpers
     def _line_row(self) -> int:
@@ -174,12 +294,71 @@ class MainWindow(QMainWindow):
         if idx.isValid():
             self.char_model.remove_row(idx.row())
 
+    def _set_send_editor(self, editor, row=None):
+        self._active_send_editor = editor
+        if row is not None:
+            self._send_edit_row = row
+
+    def _remember_send_cursor(self, row: int, pos: int):
+        # pos はコードポイント index（デリゲート側で UTF-16 から変換済み）
+        self._send_cursor_row = row
+        self._send_cursor_pos = pos
+
+    def _set_text_editor(self, editor):
+        self._active_text_editor = editor
+
+    def _commit_open_cell_editor(self) -> bool:
+        """原文セルを編集中なら、その内容を確定して閉じる。
+
+        絵文字クリックで未確定の入力が消える事故を防ぐ。確定により原文→送信テキストの
+        反映（リンク中なら）も先に行われる。確定した場合 True。
+        """
+        ed = self._active_text_editor
+        if ed is None:
+            return False
+        from PySide6.QtWidgets import QAbstractItemDelegate
+
+        try:
+            self.line_view.commitData(ed)
+            self.line_view.closeEditor(ed, QAbstractItemDelegate.NoHint)
+            return True
+        except (RuntimeError, TypeError):
+            self._active_text_editor = None
+            return False
+
     def _insert_emoji(self, emoji: str):
+        # (1) 送信テキストを編集中なら、その生きたカーソル位置へ挿入（エディタは閉じない）
+        ed = self._active_send_editor
+        if ed is not None:
+            try:
+                ed.deselect()      # 全選択状態でも上書きしない
+                ed.insert(emoji)   # カーソル位置へ挿入（Qt 内部＝UTF-16 で正しく挿入）
+                # ライブ挿入後の位置を保険として記録（コードポイント index に変換）
+                row = self._send_edit_row if self._send_edit_row is not None else self._line_row()
+                self._remember_send_cursor(row, qt_cursor_to_index(ed.text(), ed.cursorPosition()))
+                return
+            except RuntimeError:
+                self._active_send_editor = None  # 破棄済み C++ オブジェクト → フォールバックへ
+        # (2) 原文など別セルを編集中なら、まず確定（消失防止＋送信テキストへ反映）してから追記
+        if self._commit_open_cell_editor():
+            # 反映後の送信テキスト末尾へ追記する（古いカーソル位置は無効化）
+            self._send_cursor_row = None
+            self._send_cursor_pos = None
+        # (3) 記録済みカーソル位置（無ければ末尾）へモデル層で挿入
         row = self._line_row()
         if row < 0:
-            QMessageBox.information(self, "絵文字挿入", "挿入先のセリフ行を選択してください。")
+            QMessageBox.information(
+                self, "絵文字挿入",
+                "セルをダブルクリックして編集し、入れたい位置にカーソルを置いてから押してください。",
+            )
             return
-        self.line_model.insert_emoji(row, emoji)
+        pos = self._send_cursor_pos if self._send_cursor_row == row else None
+        self.line_model.insert_emoji(row, emoji, pos)
+        # 連続挿入できるよう位置を追従（すべてコードポイント index）
+        self._send_cursor_row = row
+        self._send_cursor_pos = (
+            len(self.line_model.rows[row].send_text) if pos is None else pos + len(emoji)
+        )
 
     def _on_changed(self):
         self.dirty = True
@@ -203,20 +382,52 @@ class MainWindow(QMainWindow):
             self.val_list.addItem(f"{mark} {loc}{i.message}")
         if not issues:
             self.val_list.addItem("問題なし")
+        # 検証タブが隠れていても気づけるよう、見出しに件数バッジを出す
+        errors = sum(1 for i in issues if i.is_error)
+        warns = len(issues) - errors
+        badge = ""
+        if errors:
+            badge += f"  ✖{errors}"
+        if warns:
+            badge += f"  ⚠{warns}"
+        if getattr(self, "_checks_tab_index", None) is not None:
+            self.tabs.setTabText(self._checks_tab_index, "検証 / 生成ログ" + badge)
 
     # ------------------------------------------------------------- file ops
-    def _confirm_discard(self) -> bool:
+    def _maybe_save(self) -> bool:
+        """未保存があれば 保存/破棄/キャンセル を尋ねる。続行してよいなら True。
+
+        保存を選んで実際に保存できたら True、破棄なら True、キャンセルまたは
+        保存に失敗/中止したら False（＝終了・新規・開くを中断）。
+        """
         if not self.dirty:
             return True
-        r = QMessageBox.question(
-            self, "確認", "未保存の変更があります。破棄しますか？",
-            QMessageBox.Yes | QMessageBox.No,
+        r = QMessageBox.warning(
+            self, "未保存の変更",
+            "未保存の変更があります。保存しますか？",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
         )
-        return r == QMessageBox.Yes
+        if r == QMessageBox.StandardButton.Save:
+            return self._save_file()   # 保存成功で True、名前付け保存を中止したら False
+        if r == QMessageBox.StandardButton.Discard:
+            return True
+        return False  # Cancel
+
+    def _clear_send_editor_state(self):
+        """モデルリセット前に、破棄されうる編集中エディタ参照を無効化する。"""
+        self._active_send_editor = None
+        self._active_text_editor = None
+        self._send_edit_row = None
+        self._send_cursor_row = None
+        self._send_cursor_pos = None
 
     def _new_file(self):
-        if not self._confirm_discard():
+        if not self._maybe_save():
             return
+        self._clear_send_editor_state()
         self.char_model.beginResetModel(); self.char_model.rows = []; self.char_model.endResetModel()
         self.line_model.beginResetModel(); self.line_model.rows = []; self.line_model.linked = []; self.line_model.endResetModel()
         self.char_model.add_row()
@@ -227,7 +438,7 @@ class MainWindow(QMainWindow):
         self._revalidate()
 
     def _open_file(self):
-        if not self._confirm_discard():
+        if not self._maybe_save():
             return
         path, _ = QFileDialog.getOpenFileName(self, "CSV を開く", "", "CSV (*.csv)")
         if not path:
@@ -241,6 +452,7 @@ class MainWindow(QMainWindow):
         self._load_scenario(sc, path)
 
     def _load_scenario(self, sc: Scenario, path: str | None):
+        self._clear_send_editor_state()
         self.char_model.beginResetModel(); self.char_model.rows = sc.characters; self.char_model.endResetModel()
         self.line_model.beginResetModel()
         self.line_model.rows = sc.lines
@@ -250,6 +462,8 @@ class MainWindow(QMainWindow):
         self.dirty = False
         self._update_title()
         self._revalidate()
+        self.line_view.resizeRowsToContents()
+        self.char_view.resizeRowsToContents()
 
     def _save_file(self) -> bool:
         if self.current_path is None:
@@ -277,15 +491,98 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(self, "設定ファイルを選択", "", "YAML (*.yaml *.yml)")
         if path:
             self.config_path = path
+            self._start_worker()  # 新しい設定でモデルを読み込み直す
+
+    # ------------------------------------------------------- resident worker
+    def _start_worker(self) -> None:
+        """常駐ワーカーを起動しモデルをプリロードする（設定ファイルがある場合）。"""
+        if self.gen is not None:
+            self.gen.stop()
+            self.gen = None
+        self._use_worker = None
+        if not (self.config_path and os.path.exists(self.config_path)):
+            # 設定が無い場合は常駐せず、従来どおり実行時に CLI を起動する
+            self._use_worker = False
+            return
+        self.gen = GenerationController(self.config_path, self)
+        self.gen.logged.connect(self._on_gen_log)
+        self.gen.ready.connect(self._on_gen_ready)
+        self.gen.preload_failed.connect(self._on_gen_preload_failed)
+        self.gen.preview_done.connect(self._on_gen_preview_done)
+        self.gen.op_failed.connect(self._on_gen_op_failed)
+        self.gen.build_progress.connect(self._on_gen_build_progress)
+        self.gen.build_done.connect(self._on_gen_build_done)
+        self.statusBar().showMessage("モデルを読み込み中…", 0)
+        self.gen.preload()
+
+    def _on_gen_log(self, msg: str) -> None:
+        self.log.addItem(msg)
+        self.log.scrollToBottom()
+
+    def _on_gen_ready(self) -> None:
+        self._use_worker = True
+        self.statusBar().showMessage("モデル準備完了（生成は常駐モデルを使用）", 4000)
+
+    def _on_gen_preload_failed(self, msg: str) -> None:
+        self._use_worker = False
+        self.statusBar().showMessage("常駐ワーカー不可 → 従来方式で生成します", 6000)
+        self.log.addItem(f"⚠ 常駐ワーカーを使えません（従来方式で生成）: {msg}")
+
+    def _finish_worker_op(self) -> None:
+        self._worker_busy = False
+        self.gen_btn.setEnabled(True)
+
+    def _on_gen_preview_done(self, out: str) -> None:
+        self._finish_worker_op()
+        if os.path.exists(out):
+            self._play(out)
+        else:
+            QMessageBox.warning(self, "お試し生成", "生成に失敗しました。ログを確認してください。")
+
+    def _on_gen_op_failed(self, msg: str) -> None:
+        self._finish_worker_op()
+        self.log.addItem(f"✖ 生成エラー: {msg}")
+        QMessageBox.warning(self, "生成エラー", msg)
+
+    def _on_gen_build_progress(self, done: int, total: int, name: str, status: str) -> None:
+        self.progress.setMaximum(max(total, 1))
+        self.progress.setValue(done)
+        self.log.addItem(f"{done}/{total} {name} {status}")
+        self.log.scrollToBottom()
+
+    def _on_gen_build_done(self, result: dict) -> None:
+        self._finish_worker_op()
+        self.log.addItem(
+            f"完了: 生成 {result['generated']} / スキップ {result['skipped']} / 失敗 {result['failed']}"
+        )
+        for name, err in result.get("failures", []):
+            self.log.addItem(f"  ✖ {name}: {err}")
+        self.log.addItem(f"→ {result['out_dir']}")
+        self.log.scrollToBottom()
 
     # ------------------------------------------------------------- generation
     def _python(self) -> str:
         return sys.executable or "python3"
 
+    def _project_dir(self) -> str:
+        """プロジェクトの基準フォルダ（config.yaml のある場所 → CSV の場所 → cwd）。"""
+        if self.config_path and os.path.exists(self.config_path):
+            return os.path.dirname(os.path.abspath(self.config_path))
+        if self.current_path:
+            return os.path.dirname(os.path.abspath(self.current_path))
+        return os.getcwd()
+
     def _config_args(self) -> list[str]:
         return ["--config", self.config_path] if self.config_path else []
 
+    def _worker_available(self) -> bool:
+        # 常駐ワーカーが使える（準備完了 or 読込中）。preload 失敗時のみ False。
+        return self.gen is not None and self._use_worker is not False
+
     def _run_bulk(self):
+        if self._worker_busy:
+            QMessageBox.information(self, "実行中", "別の生成処理が実行中です。")
+            return
         if self.dirty or self.current_path is None:
             if not self._save_file():
                 return
@@ -300,6 +597,25 @@ class MainWindow(QMainWindow):
         out_dir = QFileDialog.getExistingDirectory(self, "出力先フォルダを選択")
         if not out_dir:
             return
+        # 進捗・ログが見えるよう検証/ログタブへ切り替える
+        if getattr(self, "_checks_tab_index", None) is not None:
+            self.tabs.setCurrentIndex(self._checks_tab_index)
+
+        if self._worker_available():
+            # 常駐（プリロード済み）モデルで生成
+            self._worker_busy = True
+            self.gen_btn.setEnabled(False)
+            self.progress.setValue(0)
+            self.statusBar().showMessage("一括生成中…（常駐モデル）", 0)
+            self.log.addItem("$ 一括生成（常駐モデル）")
+            self.gen.build({
+                "csv_path": self.current_path,
+                "out_dir": out_dir,
+                "group_by_char": True,
+                "copy_csv": True,
+            })
+            return
+        # フォールバック: 従来どおり CLI をサブプロセス起動
         args = [
             "-m", "irodori_cli", *self._config_args(), "--csv", self.current_path,
             "build", "--out-dir", out_dir, "--copy-csv", "--group-by-char", "--progress",
@@ -310,6 +626,9 @@ class MainWindow(QMainWindow):
         self.log.addItem(f"完了 (code={code}) → {out_dir}")
 
     def _run_preview(self):
+        if self._worker_busy:
+            QMessageBox.information(self, "実行中", "別の生成処理が実行中です。")
+            return
         row = self._line_row()
         if row < 0:
             QMessageBox.information(self, "お試し生成", "生成するセリフ行を選択してください。")
@@ -319,11 +638,23 @@ class MainWindow(QMainWindow):
         if char is None:
             QMessageBox.warning(self, "お試し生成", "このセリフのキャラが未定義です。")
             return
-        out = os.path.join(tempfile.gettempdir(), "irodori_preview", f"row{row}.wav")
+        # 隠し temp ではなく、プロジェクト内の見える preview/ フォルダへ保存
+        out = os.path.join(self._project_dir(), "preview", f"row{row + 1}.wav")
+        caption = effective_caption(line, char)  # v4: 行→キャラ既定の順で解決
+
+        if self._worker_available():
+            self._worker_busy = True
+            self.gen_btn.setEnabled(False)
+            self.statusBar().showMessage("お試し生成中…（常駐モデル）", 0)
+            self.gen.preview(line.tts_text(), char.lora_dir, out, caption)
+            return
+        # フォールバック: 従来どおり CLI をサブプロセス起動
         args = [
             "-m", "irodori_cli", *self._config_args(),
             "preview", "--text", line.tts_text(), "--lora-dir", char.lora_dir, "--out", out,
         ]
+        if caption:
+            args += ["--caption", caption]
         self._start_process(args, on_done=lambda code: self._preview_done(code, out))
 
     def _preview_done(self, code: int, out: str):
@@ -386,7 +717,10 @@ class MainWindow(QMainWindow):
         on_done(code)
 
     def closeEvent(self, event):
-        if self._confirm_discard():
+        if self._maybe_save():
+            if self.gen is not None:
+                self.gen.stop()  # 常駐ワーカーを終了
+                self.gen = None
             event.accept()
         else:
             event.ignore()
@@ -395,7 +729,10 @@ class MainWindow(QMainWindow):
 def main():
     from PySide6.QtWidgets import QApplication
 
+    from .theme import apply_theme
+
     app = QApplication(sys.argv)
+    apply_theme(app)  # ライトテーマ（style.qss）を適用
     win = MainWindow()
     win.show()
     sys.exit(app.exec())

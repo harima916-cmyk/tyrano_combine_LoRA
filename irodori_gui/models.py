@@ -9,7 +9,7 @@ from irodori_csv.naming import output_name
 
 
 class CharacterTableModel(QAbstractTableModel):
-    HEADERS = ["キャラ名", "参照番号", "LoRAフォルダ", "生成ファイルヘッド"]
+    HEADERS = ["キャラ名", "参照番号", "LoRAフォルダ", "生成ファイルヘッド", "キャプション(既定)"]
 
     changed = Signal()
 
@@ -33,7 +33,7 @@ class CharacterTableModel(QAbstractTableModel):
         if not index.isValid() or role not in (Qt.DisplayRole, Qt.EditRole):
             return None
         c = self.rows[index.row()]
-        return [c.name, c.ref, c.lora_dir, c.head][index.column()]
+        return [c.name, c.ref, c.lora_dir, c.head, c.caption][index.column()]
 
     def setData(self, index, value, role=Qt.EditRole):
         if role != Qt.EditRole or not index.isValid():
@@ -49,6 +49,8 @@ class CharacterTableModel(QAbstractTableModel):
             c.lora_dir = value
         elif col == 3:
             c.head = value
+        elif col == 4:
+            c.caption = value
         self.dataChanged.emit(index, index)
         self.changed.emit()
         return True
@@ -91,8 +93,8 @@ class CharacterTableModel(QAbstractTableModel):
 
 
 class LineTableModel(QAbstractTableModel):
-    HEADERS = ["#", "キャラ", "テキスト", "送信テキスト", "🔗", "出力名"]
-    COL_NUM, COL_CHAR, COL_TEXT, COL_SEND, COL_LINK, COL_OUT = range(6)
+    HEADERS = ["#", "キャラ", "テキスト", "送信テキスト", "キャプション", "🔗", "出力名"]
+    COL_NUM, COL_CHAR, COL_TEXT, COL_SEND, COL_CAPTION, COL_LINK, COL_OUT = range(7)
 
     changed = Signal()
 
@@ -162,6 +164,8 @@ class LineTableModel(QAbstractTableModel):
                 return line.text
             if col == self.COL_SEND:
                 return line.send_text
+            if col == self.COL_CAPTION:
+                return line.caption
             if col == self.COL_LINK:
                 return "🔗" if self.linked[row] else "✎"
             if col == self.COL_OUT:
@@ -186,6 +190,8 @@ class LineTableModel(QAbstractTableModel):
         elif col == self.COL_SEND:
             line.send_text = value
             self.linked[row] = False  # 手動編集で切り離し
+        elif col == self.COL_CAPTION:
+            line.caption = value  # キャプションはリンク状態に影響しない
         else:
             return False
         self._emit_row(row)
@@ -199,7 +205,7 @@ class LineTableModel(QAbstractTableModel):
 
     def flags(self, index):
         base = Qt.ItemIsEnabled | Qt.ItemIsSelectable
-        if index.column() in (self.COL_CHAR, self.COL_TEXT, self.COL_SEND):
+        if index.column() in (self.COL_CHAR, self.COL_TEXT, self.COL_SEND, self.COL_CAPTION):
             return base | Qt.ItemIsEditable
         return base
 
@@ -216,7 +222,7 @@ class LineTableModel(QAbstractTableModel):
         if 0 <= row < len(self.rows):
             src = self.rows[row]
             self.beginInsertRows(QModelIndex(), row + 1, row + 1)
-            self.rows.insert(row + 1, Line(src.ref, src.text, src.send_text))
+            self.rows.insert(row + 1, Line(src.ref, src.text, src.send_text, src.caption))
             self.linked.insert(row + 1, self.linked[row])
             self.endInsertRows()
             self.refresh_all()
@@ -250,12 +256,20 @@ class LineTableModel(QAbstractTableModel):
             self._emit_row(row)
             self.changed.emit()
 
-    def insert_emoji(self, row: int, emoji: str):
-        """選択行の送信テキスト末尾に絵文字を追加（切り離し扱い）。"""
+    def insert_emoji(self, row: int, emoji: str, pos: int | None = None):
+        """選択行の送信テキストの指定位置へ絵文字を挿入（切り離し扱い）。
+
+        pos=None なら末尾。範囲外の pos はクランプする。
+        """
         if 0 <= row < len(self.rows):
-            self.rows[row].send_text += emoji
+            text = self.rows[row].send_text
+            if pos is None:
+                pos = len(text)
+            pos = max(0, min(pos, len(text)))
+            self.rows[row].send_text = text[:pos] + emoji + text[pos:]
             self.linked[row] = False
-            self._emit_row(row)
+            # 他セル(原文など)を編集中でも巻き込まないよう、変更列(送信/リンク)だけ通知する
+            self.dataChanged.emit(self.index(row, self.COL_SEND), self.index(row, self.COL_LINK))
             self.changed.emit()
 
     def lines(self) -> list[Line]:

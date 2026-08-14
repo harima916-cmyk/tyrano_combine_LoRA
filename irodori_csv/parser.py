@@ -79,6 +79,7 @@ def read_scenario(path: str, encoding: str = "utf-8-sig") -> Scenario:
                         ref=r.get("参照番号", ""),
                         lora_dir=r.get("LoRAフォルダ", ""),
                         head=r.get("生成ファイルヘッド", ""),
+                        caption=r.get("キャプション", ""),
                     )
                 )
         elif LINE_MARKER in header:
@@ -91,6 +92,7 @@ def read_scenario(path: str, encoding: str = "utf-8-sig") -> Scenario:
                         ref=r.get("参照番号", ""),
                         text=r.get("テキスト", ""),
                         send_text=r.get("送信テキスト", ""),
+                        caption=r.get("キャプション", ""),
                     )
                 )
         else:
@@ -113,13 +115,13 @@ def dumps_scenario(scenario: Scenario) -> str:
 
     writer.writerow(CHAR_HEADERS)
     for c in scenario.characters:
-        writer.writerow([c.name, c.ref, c.lora_dir, c.head])
+        writer.writerow([c.name, c.ref, c.lora_dir, c.head, c.caption])
 
     writer.writerow([])  # セクション区切りの空行
 
     writer.writerow(LINE_HEADERS)
     for line in scenario.lines:
-        writer.writerow([line.ref, line.text, line.send_text])
+        writer.writerow([line.ref, line.text, line.send_text, line.caption])
 
     return buf.getvalue()
 

@@ -6,13 +6,28 @@ import argparse
 import os
 import shutil
 import sys
-import tempfile
 
 from irodori_csv import ParseError, read_scenario, validate_scenario
 
 from .build import Builder
 from .config import Config, load_config
 from .tts import InferRunner
+from .worker import WorkerError, WorkerRunner
+
+
+def _make_runner(cfg: Config, log=print):
+    """設定に応じた TTSRunner を返す。worker 起動に失敗したら subprocess にフォールバック。
+
+    返り値は (runner, close_fn)。close_fn は使い終わりに必ず呼ぶ。
+    """
+    if cfg.backend == "worker":
+        w = WorkerRunner(cfg, log_fn=lambda m: log(m))
+        try:
+            w.start()  # モデルを1回だけロード（ここで常駐開始）
+            return w, w.close
+        except WorkerError as e:
+            log(f"⚠ 常駐ワーカーを起動できませんでした（従来方式にフォールバック）: {e}")
+    return InferRunner(cfg), (lambda: None)
 
 
 def _load(args) -> Config:
@@ -90,15 +105,19 @@ def cmd_build(args) -> int:
         if args.progress:
             print(f"PROGRESS {done}/{total} {name} {status}", flush=True)
 
-    builder = Builder(cfg, InferRunner(cfg))
-    result = builder.build(
-        scenario,
-        out_dir=args.out_dir,
-        group_by_char=args.group_by_char,
-        force=args.force,
-        chars=chars,
-        progress=progress,
-    )
+    runner, close_runner = _make_runner(cfg, log=lambda m: print(m, flush=True))
+    try:
+        builder = Builder(cfg, runner)
+        result = builder.build(
+            scenario,
+            out_dir=args.out_dir,
+            group_by_char=args.group_by_char,
+            force=args.force,
+            chars=chars,
+            progress=progress,
+        )
+    finally:
+        close_runner()
 
     if args.copy_csv:
         dest_dir = args.out_dir or cfg.voice_out_dir
@@ -121,13 +140,17 @@ def cmd_build(args) -> int:
 
 def cmd_preview(args) -> int:
     cfg = _load(args)
-    out = args.out or os.path.join(tempfile.gettempdir(), "irodori_preview", "preview.wav")
-    builder = Builder(cfg, InferRunner(cfg))
+    # 既定はプロジェクト内の見える preview/ フォルダ（隠しフォルダを避ける）
+    out = args.out or os.path.join(cfg.preview_dir, "preview.wav")
+    runner, close_runner = _make_runner(cfg, log=lambda m: print(m, file=sys.stderr, flush=True))
     try:
-        path = builder.preview(args.text, args.lora_dir, out)
+        builder = Builder(cfg, runner)
+        path = builder.preview(args.text, args.lora_dir, out, caption=args.caption or "")
     except Exception as e:  # noqa: BLE001
         print(f"生成エラー: {e}", file=sys.stderr)
         return 1
+    finally:
+        close_runner()
     print(path)
     return 0
 
@@ -167,6 +190,7 @@ def build_parser() -> argparse.ArgumentParser:
     pp = sub.add_parser("preview", help="1 行だけお試し生成")
     pp.add_argument("--text", required=True)
     pp.add_argument("--lora-dir", required=True)
+    pp.add_argument("--caption", default=None, help="v4: 声質・感情の自由文（任意）")
     pp.add_argument("--out", default=None)
     pp.set_defaults(func=cmd_preview)
 
@@ -176,10 +200,32 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _force_utf8_output() -> None:
+    """Windows の bash 等で日本語メッセージが文字化けしないよう UTF-8 出力にする。"""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _force_utf8_output()
     parser = build_parser()
     args = parser.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except KeyboardInterrupt:
+        print("中断しました。", file=sys.stderr)
+        return 130
+    except Exception as e:  # noqa: BLE001 - ユーザーへスタックトレースを見せない
+        # 継続不能な入力・環境エラーは日本語メッセージ＋終了コードで返す。
+        if getattr(args, "verbose", False):
+            import traceback
+
+            traceback.print_exc()
+        print(f"エラー: {e}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

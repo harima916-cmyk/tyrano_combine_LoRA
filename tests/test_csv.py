@@ -162,6 +162,24 @@ class TestValidate(unittest.TestCase):
         line = Line("1", "原文", "")
         self.assertEqual(line.tts_text(), "原文")
 
+    def test_same_head_flat_dup_error(self):
+        # 同じヘッドはフラット配置だと出力名が衝突しエラー
+        sc = Scenario(
+            characters=[Character("あ", "1", "/l", "line_"), Character("い", "2", "/l", "line_")],
+            lines=[Line("1", "a", "a"), Line("2", "b", "b")],
+        )
+        issues = validate_scenario(sc, check_lora_exists=False, group_by_char=False)
+        self.assertTrue(any("重複" in i.message and i.is_error for i in issues))
+
+    def test_same_head_grouped_ok(self):
+        # 同じヘッドでも --group-by-char なら別サブフォルダで衝突しない
+        sc = Scenario(
+            characters=[Character("あ", "1", "/l", "line_"), Character("い", "2", "/l", "line_")],
+            lines=[Line("1", "a", "a"), Line("2", "b", "b")],
+        )
+        issues = validate_scenario(sc, check_lora_exists=False, group_by_char=True)
+        self.assertEqual([i for i in issues if i.is_error], [])
+
 
 if __name__ == "__main__":
     unittest.main()

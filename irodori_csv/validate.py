@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass
 
 from .model import Scenario
-from .naming import assign_numbers
+from .naming import assign_numbers, folder_name_map, relative_output_path
 
 # 出力名に使えない文字（ヘッド由来。パス区切りはヘッドの一部としては非対象だが
 # ファイル名としては不正なのでチェックする）
@@ -83,18 +83,23 @@ def validate_scenario(
                 Issue("error", "送信テキスト・原文がともに空です。", "lines", i)
             )
 
-    # --- 出力名の重複・不正文字 ---
-    names: dict[str, int] = {}
+    # --- 出力先の重複・不正文字（SPEC §4.6）---
+    # 重複判定の単位は配置モードで変わる:
+    #   フラット配置    : 出力ファイル名
+    #   --group-by-char : サブフォルダ名/出力ファイル名（別フォルダの同名は許可）
+    folders = folder_name_map(scenario) if group_by_char else None
+    seen_paths: dict[str, int] = {}
     for a in assign_numbers(scenario):
         if any(ch in _INVALID_FILENAME_CHARS for ch in a.filename):
             issues.append(
                 Issue("error", f"出力名に不正な文字があります: {a.filename}", "lines")
             )
-        if a.filename in names:
+        rel = relative_output_path(a.filename, a.line.ref, group_by_char, folders)
+        if rel in seen_paths:
             issues.append(
-                Issue("error", f"出力名「{a.filename}」が重複しています。", "lines")
+                Issue("error", f"出力先「{rel}」が重複しています。", "lines")
             )
         else:
-            names[a.filename] = 1
+            seen_paths[rel] = 1
 
     return issues

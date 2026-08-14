@@ -2,9 +2,72 @@
 
 from __future__ import annotations
 
+from typing import Callable
+
 from PySide6.QtWidgets import QComboBox, QFileDialog, QStyledItemDelegate
 
 from .models import CharacterTableModel
+from .textutil import qt_cursor_to_index
+
+
+class EditorTrackingDelegate(QStyledItemDelegate):
+    """既定の編集動作のまま、開いている QLineEdit エディタ参照を親へ通知する。
+
+    原文(テキスト)列に付け、絵文字クリック時に未確定入力を確定して消失を防ぐために使う。
+    """
+
+    def __init__(self, on_editor: Callable, parent=None):
+        super().__init__(parent)
+        self._on_editor = on_editor
+
+    def createEditor(self, parent, option, index):
+        editor = super().createEditor(parent, option, index)
+        self._on_editor(editor)
+        return editor
+
+    def destroyEditor(self, editor, index):
+        self._on_editor(None)
+        super().destroyEditor(editor, index)
+
+
+class SendTextDelegate(QStyledItemDelegate):
+    """送信テキスト列: 編集中エディタとカーソル位置を親へ通知する。
+
+    絵文字パレットが「編集中セルのカーソル位置」へ挿入できるよう:
+    - `on_editor(editor|None)`: 編集開始で QLineEdit を、終了で None を通知（ライブ挿入用）
+    - `on_cursor(row, pos)`  : カーソル移動を通知（エディタが閉じても位置を復元できる保険）
+    """
+
+    def __init__(self, on_editor: Callable, on_cursor: Callable, parent=None):
+        super().__init__(parent)
+        self._on_editor = on_editor
+        self._on_cursor = on_cursor
+
+    def createEditor(self, parent, option, index):
+        editor = super().createEditor(parent, option, index)  # 既定は QLineEdit
+        self._on_editor(editor, index.row())
+        row = index.row()
+        try:
+            # cursorPositionChanged の位置は UTF-16 単位 → コードポイント index に変換して通知
+            editor.cursorPositionChanged.connect(
+                lambda _old, new, ed=editor, r=row: self._on_cursor(
+                    r, qt_cursor_to_index(ed.text(), new)
+                )
+            )
+        except AttributeError:
+            pass
+        return editor
+
+    def setModelData(self, editor, model, index):
+        super().setModelData(editor, model, index)
+        try:
+            self._on_cursor(index.row(), qt_cursor_to_index(editor.text(), editor.cursorPosition()))
+        except (AttributeError, RuntimeError):
+            pass
+
+    def destroyEditor(self, editor, index):
+        self._on_editor(None, None)
+        super().destroyEditor(editor, index)
 
 
 class CharacterComboDelegate(QStyledItemDelegate):

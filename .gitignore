@@ -3,6 +3,7 @@ __pycache__/
 .irodori_cache/
 .irodori_state.json
 voices/
+preview/
 config.yaml
 /build/
 /dist/

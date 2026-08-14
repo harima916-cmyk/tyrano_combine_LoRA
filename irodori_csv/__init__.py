@@ -6,8 +6,15 @@
 - validate: SPEC §4.6 の検証ルール
 """
 
-from .model import Character, Line, Scenario
-from .naming import output_name, assign_numbers, LineAssignment
+from .model import Character, Line, Scenario, effective_caption
+from .naming import (
+    output_name,
+    assign_numbers,
+    LineAssignment,
+    folder_name_map,
+    relative_output_path,
+    sanitize_folder,
+)
 from .parser import read_scenario, write_scenario, ParseError
 from .validate import validate_scenario, Issue
 
@@ -15,9 +22,13 @@ __all__ = [
     "Character",
     "Line",
     "Scenario",
+    "effective_caption",
     "output_name",
     "assign_numbers",
     "LineAssignment",
+    "folder_name_map",
+    "relative_output_path",
+    "sanitize_folder",
     "read_scenario",
     "write_scenario",
     "ParseError",

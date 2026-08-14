@@ -1,0 +1,141 @@
+"""絵文字挿入（アプリ層）の回帰テスト。offscreen で実行。
+
+ライブ挿入（編集中エディタ）は自動テストしづらいため、
+「エディタが閉じた/未編集」経路（＝過去に末尾追加へ退行した経路）を固定する。
+"""
+
+import os
+import sys
+import unittest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+try:
+    from PySide6.QtWidgets import QApplication
+
+    _APP = QApplication.instance() or QApplication([])
+    from PySide6.QtWidgets import QLineEdit  # noqa: E402
+
+    from irodori_csv import Character, Line  # noqa: E402
+    from irodori_gui.app import MainWindow  # noqa: E402
+    from irodori_gui.models import LineTableModel as L  # noqa: E402
+
+    HAVE_QT = True
+except Exception:  # noqa: BLE001
+    HAVE_QT = False
+
+
+@unittest.skipUnless(HAVE_QT, "PySide6/offscreen が使えない環境ではスキップ")
+class TestEmojiInsertApp(unittest.TestCase):
+    def _win(self) -> "MainWindow":
+        w = MainWindow()
+        w.line_model.setData(w.line_model.index(0, L.COL_CHAR), "1", role=2)
+        w.line_model.setData(w.line_model.index(0, L.COL_TEXT), "おはよう", role=2)
+        w.line_view.setCurrentIndex(w.line_model.index(0, L.COL_SEND))
+        return w
+
+    def test_fallback_inserts_at_tracked_cursor(self):
+        """エディタが閉じていても、記録したカーソル位置へ挿入（末尾追加でない）。"""
+        w = self._win()
+        w._active_send_editor = None
+        w._remember_send_cursor(0, 2)
+        w._insert_emoji("😊")
+        self.assertEqual(w.line_model.rows[0].send_text, "おは😊よう")
+        self.assertFalse(w.line_model.linked[0])
+
+    def test_fallback_consecutive_advances(self):
+        w = self._win()
+        w._active_send_editor = None
+        w._remember_send_cursor(0, 2)
+        w._insert_emoji("😲")
+        w._insert_emoji("🥺")
+        self.assertEqual(w.line_model.rows[0].send_text, "おは😲🥺よう")
+
+    def test_append_when_untracked(self):
+        w = self._win()
+        w._active_send_editor = None
+        w._send_cursor_row = None
+        w._send_cursor_pos = None
+        w._insert_emoji("😊")
+        self.assertEqual(w.line_model.rows[0].send_text, "おはよう😊")
+
+    def test_emoji_while_editing_text_does_not_lose_text(self):
+        """原文編集中（未確定）に絵文字を押しても原文が消えず、送信テキストへ反映される。"""
+        w = self._win()
+        tidx = w.line_model.index(0, L.COL_TEXT)
+        w.line_view.setCurrentIndex(tidx)
+        w.line_view.edit(tidx)
+        _APP.processEvents()
+        eds = w.line_view.viewport().findChildren(QLineEdit)
+        self.assertTrue(eds, "原文エディタが開いていること")
+        ted = eds[0]
+        ted.setText("こんにちは")   # 未確定の入力
+        ted.setFocus()
+        _APP.processEvents()
+        w._insert_emoji("😊")
+        _APP.processEvents()
+        self.assertEqual(w.line_model.rows[0].text, "こんにちは")        # 消えない
+        self.assertEqual(w.line_model.rows[0].send_text, "こんにちは😊")  # 反映＋絵文字
+
+    def test_fallback_into_cell_with_existing_emoji(self):
+        """既に絵文字がある行でも、コードポイント index で正しい位置に挿入（Finding 1）。"""
+        w = self._win()
+        # 送信テキストを「😊test」にし、😊 の直後（コードポイント index 1）に挿入
+        w.line_model.setData(w.line_model.index(0, L.COL_SEND), "😊test", role=2)
+        w._active_send_editor = None
+        w._remember_send_cursor(0, 1)  # デリゲートが変換した後の index
+        w._insert_emoji("🎉")
+        self.assertEqual(w.line_model.rows[0].send_text, "😊🎉test")
+
+
+@unittest.skipUnless(HAVE_QT, "PySide6/offscreen が使えない環境ではスキップ")
+class TestSavePromptAndShortcut(unittest.TestCase):
+    def test_ctrl_s_shortcut_on_save_action(self):
+        from PySide6.QtGui import QKeySequence
+
+        w = MainWindow()
+        save = [a for a in w.actions() if a.text() == "保存"]
+        self.assertTrue(save, "保存アクションが存在する")
+        self.assertEqual(save[0].shortcut(), QKeySequence(QKeySequence.StandardKey.Save))
+
+    def test_maybe_save_paths(self):
+        import tempfile
+
+        from PySide6.QtWidgets import QMessageBox
+
+        w = MainWindow()
+        w.line_model.setData(w.line_model.index(0, L.COL_CHAR), "1", role=2)
+        w.line_model.setData(w.line_model.index(0, L.COL_TEXT), "やあ", role=2)
+        tmp = tempfile.mktemp(suffix=".csv")
+        w.current_path = tmp
+        orig = QMessageBox.warning
+        try:
+            # 保存 → 実際に保存され、dirty 解除、続行 True
+            w.dirty = True
+            QMessageBox.warning = lambda *a, **k: QMessageBox.StandardButton.Save
+            self.assertTrue(w._maybe_save())
+            self.assertFalse(w.dirty)
+            self.assertTrue(os.path.exists(tmp))
+            os.remove(tmp)
+            # 破棄 → 続行 True、保存しない
+            w.dirty = True
+            QMessageBox.warning = lambda *a, **k: QMessageBox.StandardButton.Discard
+            self.assertTrue(w._maybe_save())
+            self.assertFalse(os.path.exists(tmp))
+            # キャンセル → 続行 False（終了/新規/開くを中断）
+            w.dirty = True
+            QMessageBox.warning = lambda *a, **k: QMessageBox.StandardButton.Cancel
+            self.assertFalse(w._maybe_save())
+            # 変更なし → 尋ねずに True
+            w.dirty = False
+            QMessageBox.warning = lambda *a, **k: (_ for _ in ()).throw(AssertionError("prompt不要"))
+            self.assertTrue(w._maybe_save())
+        finally:
+            QMessageBox.warning = orig
+            if os.path.exists(tmp):
+                os.remove(tmp)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -119,7 +119,11 @@ def main() -> int:
 
     # ---- モデルロード（1回だけ）----
     try:
+        src = args.checkpoint or args.hf_checkpoint
+        # どのモデルを読み込むかを stdout に出す（GUI ログで確認できるように）
+        _emit(f"[worker] メインモデル: {src}")
         checkpoint_path = _resolve_checkpoint_path(args.hf_checkpoint, args.checkpoint)
+        _emit(f"[worker] チェックポイント解決先: {checkpoint_path}")
         key = RuntimeKey(
             checkpoint=checkpoint_path,
             model_device=str(model_device),
@@ -128,7 +132,7 @@ def main() -> int:
             codec_device=str(codec_device),
             codec_precision=str(args.codec_precision),
         )
-        _eprint(f"[worker] loading model on {model_device} (codec:{codec_device}) ...")
+        _emit(f"[worker] loading on {model_device} (codec:{codec_device}, precision:{args.model_precision}) ...")
         runtime = InferenceRuntime.from_key(key)
     except Exception as e:  # noqa: BLE001
         _emit(f"{FATAL} モデルのロードに失敗しました: {e}")
